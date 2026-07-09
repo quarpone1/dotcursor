@@ -49,3 +49,8 @@ Thumbs.db
 desktop.ini
 # исходники видео (в деплой идёт только public/video/)
 /video/
+
+# внутренняя документация — не для публичного репо
+/DEPLOY.md
+/CLAUDE.md
+/AGENTS.md
