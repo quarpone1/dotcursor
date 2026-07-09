@@ -85,6 +85,7 @@ export default function Projects() {
             trigger: ref.current,
             pin: true,
             scrub: 1,
+            anticipatePin: 1,
             start: "top top",
             end: () => "+=" + amount(),
             invalidateOnRefresh: true,

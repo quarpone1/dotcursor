@@ -3,9 +3,9 @@
 import { useRef } from "react";
 import { gsap, ScrollTrigger, SplitText, useGSAP } from "@/lib/gsap";
 
-// Когда видео готово: положи public/video/showreel.mp4 (+ poster.jpg),
-// поставь HAS_VIDEO = true. Видео перематывается кадрами по скроллу.
-// Совет: кодируй с частыми keyframes (ffmpeg -g 1) — иначе scrub дёргается.
+// Видео: public/video/showreel.mp4 (+ poster.jpg).
+// Десктоп — покадровая перемотка по скроллу (pin + scrub).
+// Мобильные — обычный автоплей-луп: iOS не рендерит scrub через currentTime.
 const HAS_VIDEO = true;
 const VIDEO_SRC = "/video/showreel.mp4";
 const POSTER_SRC = "/video/poster.jpg";
@@ -17,62 +17,82 @@ export default function BgVideoSection() {
 
   useGSAP(
     () => {
-      if (HAS_VIDEO && videoRef.current) {
-        const video = videoRef.current;
+      const video = videoRef.current;
+      const mm = gsap.matchMedia();
 
-        const setup = () => {
-          const dur = video.duration || 1;
+      // ===== Десктоп: pin + scrub =====
+      // ВАЖНО: триггер создаётся синхронно (не ждём loadedmetadata) — иначе
+      // pin-спейсер появляется позже соседних триггеров, позиции сбиваются
+      // и скролл «перепрыгивает» следующую секцию.
+      mm.add("(min-width: 768px)", () => {
+        video?.pause();
 
-          // text reveal lives on the SAME pinned scrub timeline as the video,
-          // so words start brightening together with the footage (not before).
-          const split = new SplitText(textRef.current, { type: "words" });
-          gsap.set(split.words, { opacity: 0.12 });
+        const split = new SplitText(textRef.current, { type: "words" });
+        gsap.set(split.words, { opacity: 0.12 });
 
-          const tl = gsap.timeline();
-          tl.to(split.words, {
-            opacity: 1,
-            ease: "none",
-            stagger: 0.3,
-            duration: 0.5,
-          }).to({}, { duration: 1.4 }); // hold through the rest of the scrub
+        const tl = gsap.timeline();
+        tl.to(split.words, {
+          opacity: 1,
+          ease: "none",
+          stagger: 0.3,
+          duration: 0.5,
+        }).to({}, { duration: 1.4 }); // hold до конца скраба
 
-          ScrollTrigger.create({
-            trigger: ref.current,
-            start: "top top",
-            end: "+=300%",
-            pin: ".bgv-stage",
-            scrub: 1,
-            animation: tl,
-            invalidateOnRefresh: true,
-            onUpdate: (self) => {
+        ScrollTrigger.create({
+          trigger: ref.current,
+          start: "top top",
+          end: "+=300%",
+          pin: ".bgv-stage",
+          scrub: 1,
+          anticipatePin: 1,
+          animation: tl,
+          invalidateOnRefresh: true,
+          onUpdate: (self) => {
+            // duration читаем лениво: пока метаданные не загрузились — пропускаем
+            const dur = video?.duration;
+            if (video && dur && isFinite(dur)) {
               const t = self.progress * dur;
               if (Math.abs(video.currentTime - t) > 0.01) video.currentTime = t;
-            },
-          });
-          ScrollTrigger.refresh();
-        };
+            }
+          },
+        });
 
-        video.pause();
-        if (video.readyState >= 1) setup();
-        else video.addEventListener("loadedmetadata", setup, { once: true });
-      } else {
-        // placeholder mode
+        return () => split.revert();
+      });
+
+      // ===== Мобильные: автоплей-луп, без пина =====
+      mm.add("(max-width: 767px)", () => {
+        if (video) {
+          video.loop = true;
+          video.play().catch(() => {
+            /* автоплей заблокирован — останется постер */
+          });
+        }
+
+        const split = new SplitText(textRef.current, { type: "words" });
         gsap.fromTo(
-          ".bgv-media",
-          { scale: 1.2, yPercent: -5 },
+          split.words,
+          { opacity: 0.12 },
           {
-            scale: 1,
-            yPercent: 5,
+            opacity: 1,
             ease: "none",
+            stagger: 0.06,
             scrollTrigger: {
-              trigger: ref.current,
-              start: "top bottom",
-              end: "bottom top",
+              trigger: textRef.current,
+              start: "top 80%",
+              end: "bottom 50%",
               scrub: true,
             },
           }
         );
-      }
+
+        return () => {
+          split.revert();
+          video?.pause();
+        };
+      });
+
+      return () => mm.revert();
     },
     { scope: ref }
   );
@@ -80,7 +100,7 @@ export default function BgVideoSection() {
   return (
     <section ref={ref} className="relative">
       <div className="bgv-stage relative h-dvh overflow-hidden bg-ink text-bone">
-        {/* ===== ФОНОВОЕ ВИДЕО (scrub по скроллу) ===== */}
+        {/* ===== ФОНОВОЕ ВИДЕО ===== */}
         <div className="bgv-media absolute inset-0 will-change-transform">
           {HAS_VIDEO ? (
             <video
@@ -108,7 +128,7 @@ export default function BgVideoSection() {
         {/* ambient light */}
         <div className="glow-orb w-[35vw] h-[35vw] top-[20%] right-[8%]" />
 
-        {/* overlaid text — revealed in sync with the video scrub */}
+        {/* overlaid text */}
         <div className="relative z-10 h-full flex items-center px-shell">
           <h2 ref={textRef} className="h2 max-w-[18ch]">
             Дизайн, который двигает бренды вперёд. Каждый пиксель — на своём месте.

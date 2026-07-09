@@ -10,6 +10,9 @@ export default function SmoothScroll({
   children: React.ReactNode;
 }) {
   useEffect(() => {
+    // На тач-устройствах оставляем нативный скролл — Lenis не инициализируем.
+    if (window.matchMedia("(pointer: coarse)").matches) return;
+
     const lenis = new Lenis({
       lerp: 0.1,
       smoothWheel: true,
