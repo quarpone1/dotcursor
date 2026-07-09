@@ -1,0 +1,19 @@
+# /etc/systemd/system/dotcursor.service
+# Next.js production server для dotcursor.ru
+
+[Unit]
+Description=dotcursor.ru — Next.js site
+After=network.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/var/www/dotcursor
+Environment=NODE_ENV=production
+Environment=PORT=3000
+ExecStart=/usr/bin/npm run start
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

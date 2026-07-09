@@ -1,0 +1,381 @@
+@import "tailwindcss";
+
+@theme {
+  /* Palette — accent shifted orange → blue */
+  --color-ink: #000000;
+  --color-micro: #202020;
+  --color-bone: #efeeec;
+  --color-sand: #f6efe5;
+  --color-steel: #758696;
+  --color-signal: #2f5dff; /* electric blue accent */
+  --color-blood: #1a36ad; /* deep blue (secondary) */
+
+  --font-display: "SF Pro Display", var(--font-work), -apple-system,
+    BlinkMacSystemFont, system-ui, sans-serif;
+  --font-sans: var(--font-work), "SF Pro Text", -apple-system, system-ui,
+    sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", monospace;
+
+  /* Fluid display sizing, matching reference scale */
+  --text-display: clamp(2.5rem, 12vw, 17rem);
+  --text-h1: clamp(2.4rem, 6.8vw, 9rem);
+  --text-h2: clamp(2rem, 7vw, 5.5rem);
+  --text-body-lg: clamp(1.25rem, 2vw, 2rem);
+
+  --radius-card: 0.15rem;
+
+  --ease-power: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* NB: Tailwind v4 preflight already resets margins/box-sizing.
+   Do NOT add an unlayered `* { margin:0 }` reset — it overrides
+   layered Tailwind spacing utilities (px-/py-/mr-/mt-). */
+
+html {
+  background: var(--color-ink);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+/* Headings: SF Pro Display, light weight + tight tracking */
+.display {
+  font-family: var(--font-display);
+  font-size: var(--text-display);
+  font-weight: 400;
+  line-height: 0.9;
+  letter-spacing: -0.04em;
+}
+.h1 {
+  font-family: var(--font-display);
+  font-size: var(--text-h1);
+  font-weight: 400;
+  line-height: 0.95;
+  letter-spacing: -0.035em;
+}
+.h2 {
+  font-family: var(--font-display);
+  font-size: var(--text-h2);
+  font-weight: 400;
+  line-height: 0.95;
+  letter-spacing: -0.03em;
+}
+
+/* Layout rhythm — generous, consistent breathing room */
+.px-shell {
+  padding-left: clamp(1.5rem, 5vw, 7rem);
+  padding-right: clamp(1.5rem, 5vw, 7rem);
+}
+.section-y {
+  padding-top: clamp(4rem, 8vw, 8.5rem);
+  padding-bottom: clamp(4rem, 8vw, 8.5rem);
+}
+
+/* Lenis */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
+/* Split-text line masking */
+.line-mask {
+  overflow: hidden;
+  display: block;
+}
+
+::selection {
+  background: var(--color-signal);
+  color: var(--color-bone);
+}
+
+/* Rolling link hover — duplicated label slides up */
+.roll {
+  overflow: hidden;
+  display: inline-block;
+  vertical-align: top;
+  height: 1lh; /* clip to exactly one line — hides the duplicate */
+}
+@supports not (height: 1lh) {
+  .roll {
+    height: 1.5em;
+  }
+}
+.roll-inner {
+  display: inline-flex;
+  flex-direction: column;
+  transition: transform 0.45s var(--ease-power);
+  will-change: transform;
+}
+.roll-inner > span {
+  display: block;
+  white-space: nowrap;
+}
+.roll:hover .roll-inner,
+a:hover .roll .roll-inner {
+  transform: translateY(-50%);
+}
+
+/* Client cell spotlight — blue glow follows the cursor inside the cell */
+.client-cell {
+  position: relative;
+}
+.client-cell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.35s;
+  pointer-events: none;
+  background: radial-gradient(
+    200px circle at var(--mx, 50%) var(--my, 50%),
+    rgba(47, 93, 255, 0.16),
+    transparent 65%
+  );
+}
+.client-cell:hover::after {
+  opacity: 1;
+}
+
+/* Slim branded scrollbar */
+::-webkit-scrollbar {
+  width: 9px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-ink);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-micro);
+  border-radius: 9999px;
+  border: 2px solid var(--color-ink);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-signal);
+}
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-micro) var(--color-ink);
+}
+
+/* Mono uppercase subheading */
+.label {
+  font-family: var(--font-mono);
+  font-size: clamp(0.68rem, 0.9vw, 0.78rem);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  font-weight: 400;
+}
+
+/* ===== Preloader glitch (transforms driven by GSAP) ===== */
+.pl-glitch {
+  display: inline-block;
+  filter: drop-shadow(0 0 22px rgba(47, 93, 255, 0.55));
+}
+.pl-layer {
+  pointer-events: none;
+}
+/* CRT scanlines */
+.pl-scan::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.06) 0 1px,
+    transparent 1px 3px
+  );
+  mix-blend-mode: overlay;
+}
+/* sweeping scan bar */
+.pl-scanbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 22%;
+  pointer-events: none;
+  z-index: 3;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(47, 93, 255, 0.12),
+    rgba(255, 255, 255, 0.08),
+    transparent
+  );
+  mix-blend-mode: screen;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pl-r, .pl-b, .pl-scanbar { display: none; }
+}
+
+/* ===== Custom cursor ===== */
+@media (pointer: fine) {
+  html.has-custom-cursor,
+  html.has-custom-cursor * {
+    cursor: none !important;
+  }
+}
+.cursor-ring {
+  will-change: transform;
+  transition: none;
+}
+.cursor-dot {
+  will-change: transform;
+}
+
+/* ===== Film grain (site-wide texture) ===== */
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: 940;
+  pointer-events: none;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  animation: grain-shift 0.6s steps(2) infinite;
+}
+@keyframes grain-shift {
+  0% { transform: translate(0, 0); }
+  50% { transform: translate(-3%, 2%); }
+  100% { transform: translate(2%, -2%); }
+}
+
+/* ===== Light & glow system ===== */
+
+/* Text shimmer — a band of light sweeps across the letters */
+.text-shimmer {
+  background: linear-gradient(
+    110deg,
+    var(--color-bone) 35%,
+    #ffffff 48%,
+    #cfe0ff 52%,
+    var(--color-bone) 65%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: shimmer 6.5s linear infinite;
+}
+.text-shimmer-signal {
+  background: linear-gradient(
+    110deg,
+    var(--color-signal) 35%,
+    #9db8ff 50%,
+    var(--color-signal) 65%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: shimmer 5s linear infinite;
+}
+@keyframes shimmer {
+  to {
+    background-position: -220% 0;
+  }
+}
+
+/* Glow */
+.glow-signal {
+  filter: drop-shadow(0 0 14px rgba(47, 93, 255, 0.55));
+}
+.glow-soft {
+  box-shadow: 0 0 80px -20px rgba(47, 93, 255, 0.45);
+}
+
+/* Floating blurred light orb (decorative) */
+.glow-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(70px);
+  opacity: 0.5;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(47, 93, 255, 0.7), transparent 70%);
+  animation: orb-float 12s ease-in-out infinite alternate;
+}
+@keyframes orb-float {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  100% { transform: translate3d(6%, -8%, 0) scale(1.15); }
+}
+
+/* Sheen — a streak of light slides across on hover */
+.sheen {
+  position: relative;
+  overflow: hidden;
+}
+.sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    120deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.16) 48%,
+    rgba(157, 184, 255, 0.18) 52%,
+    transparent 70%
+  );
+  transform: translateX(-130%);
+  transition: transform 0.9s var(--ease-power);
+  pointer-events: none;
+}
+.sheen:hover::after {
+  transform: translateX(130%);
+}
+
+/* Thin glowing divider line */
+.glow-line {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(47, 93, 255, 0.6),
+    transparent
+  );
+}
+
+/* Atmospheric background (stand-in until the real scroll video is dropped in):
+   slow-drifting blue glow + film grain over pure black */
+.atmosphere {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.atmosphere::before {
+  content: "";
+  position: absolute;
+  inset: -30%;
+  background:
+    radial-gradient(40% 40% at 30% 30%, rgba(47, 93, 255, 0.16), transparent 60%),
+    radial-gradient(50% 50% at 75% 65%, rgba(117, 134, 150, 0.12), transparent 60%),
+    radial-gradient(45% 45% at 50% 90%, rgba(26, 54, 173, 0.12), transparent 60%);
+  filter: blur(40px);
+  animation: drift 26s ease-in-out infinite alternate;
+}
+.atmosphere::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+}
+@keyframes drift {
+  0% { transform: translate3d(-4%, -3%, 0) scale(1.05); }
+  100% { transform: translate3d(5%, 4%, 0) scale(1.15); }
+}
