@@ -59,7 +59,7 @@ const projects: Project[] = [
     tag: "Сайт сыроварни / Розыгрыш",
     year: "2026",
     color: "#758696",
-    link: "https://project21070646.tilda.ws/",
+    link: "https://kocharyancheese.ru",
   },
 ];
 
