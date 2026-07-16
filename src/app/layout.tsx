@@ -8,6 +8,7 @@ import CustomCursor from "@/components/CustomCursor";
 import CursorTrail from "@/components/CursorTrail";
 import ScrollProgress from "@/components/ScrollProgress";
 import BackToTop from "@/components/BackToTop";
+import YandexMetrika from "@/components/YandexMetrika";
 
 // Work Sans for Latin/body. Headings & Cyrillic resolve to SF Pro Display
 // via the system font stack defined in globals.css.
@@ -53,6 +54,7 @@ export default function RootLayout({
       className={`${workSans.variable} antialiased`}
     >
       <body className="bg-ink text-bone">
+        <YandexMetrika />
         <Preloader />
         <CursorTrail />
         <CustomCursor />
