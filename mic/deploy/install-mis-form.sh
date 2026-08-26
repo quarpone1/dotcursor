@@ -41,14 +41,25 @@ fi
 chown root:deploy "$ENV_FILE"
 chmod 640 "$ENV_FILE"
 
-if grep -qE '^(YANDEX_DISK_TOKEN|SMTP_PASS)=\s*$' "$ENV_FILE"; then
-  echo "‼  В $ENV_FILE не заполнены токен Диска или пароль почты."
+MISSING=$(grep -E '^(YANDEX_DISK_TOKEN|SMTP_USER|SMTP_PASS|MAIL_FROM|MAIL_TO)=[[:space:]]*$' "$ENV_FILE" | cut -d= -f1 || true)
+if [ -n "$MISSING" ]; then
+  echo "‼  В $ENV_FILE не заполнено:"; echo "$MISSING" | sed 's/^/     /'
+  exit 1
+fi
+
+# Подставные значения из шаблона — частая причина «Invalid user or password»
+if grep -qE '^(SMTP_USER|MAIL_FROM)=.*example\.(ru|com)' "$ENV_FILE"; then
+  echo "‼  В $ENV_FILE остался адрес-заглушка из шаблона:"
+  grep -nE '^(SMTP_USER|MAIL_FROM)=' "$ENV_FILE" | sed 's/^/     /'
+  echo "   Впишите реальный ящик, с которого уходят заявки."
   exit 1
 fi
 
 say "Проверяю связь с Яндекс.Диском и почтой"
-sudo -u deploy bash -lc "cd $APP && set -a && . $ENV_FILE && set +a && node tools/check-disk.mjs"
-sudo -u deploy bash -lc "cd $APP && set -a && . $ENV_FILE && set +a && node tools/check-mail.mjs"
+# --env-file, а не сорсинг шеллом: так значения читаются буквально,
+# как их потом прочитает systemd, и пароль не поедет от лишних символов.
+sudo -u deploy bash -lc "cd $APP && node --env-file=$ENV_FILE tools/check-disk.mjs"
+sudo -u deploy bash -lc "cd $APP && node --env-file=$ENV_FILE tools/check-mail.mjs"
 
 # --- сервис ---
 say "Ставлю systemd-сервис"
