@@ -99,9 +99,16 @@ location /zayavka/ {
 }
 NGINX
 
-# Ищем блок с default_server — это тот, что отвечает по IP
-DEFAULT_CONF=$(grep -rlE 'listen\s+80\s+default_server' /etc/nginx/sites-enabled/ | head -1 || true)
-[ -n "$DEFAULT_CONF" ] || { echo "Не нашёл default_server в /etc/nginx/sites-enabled/"; exit 1; }
+# Ищем блок с default_server — это тот, что отвечает по IP.
+# -R, а не -r: в sites-enabled лежат симлинки, при -r grep их не разворачивает.
+DEFAULT_CONF=$(grep -RlE 'listen[[:space:]]+(\[::\]:)?80[[:space:]]+default_server' \
+  /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null | head -1 || true)
+if [ -z "$DEFAULT_CONF" ]; then
+  echo "Не нашёл блок с default_server. Что включено:"
+  ls -l /etc/nginx/sites-enabled/ 2>/dev/null | sed 's/^/     /'
+  echo "   Добавьте include вручную:  include snippets/mis-form.conf;"
+  exit 1
+fi
 DEFAULT_CONF=$(readlink -f "$DEFAULT_CONF")
 echo "   default_server: $DEFAULT_CONF"
 
