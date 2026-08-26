@@ -1,0 +1,26 @@
+[Unit]
+Description=Форма заявки в техподдержку МИС
+After=network.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/var/www/mis-form
+EnvironmentFile=/etc/mis-form.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node server.mjs
+Restart=always
+RestartSec=5
+
+# журнал заявок пишется сюда
+StateDirectory=mis-form
+Environment=LOG_DIR=/var/lib/mis-form
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mis-form
+
+[Install]
+WantedBy=multi-user.target

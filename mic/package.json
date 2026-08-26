@@ -1,0 +1,19 @@
+{
+  "name": "mis-support-form",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Форма заявки в техподдержку МИС: загрузка файлов на Яндекс.Диск + письмо в Planfix",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --env-file=.env server.mjs",
+    "check": "node --check server.mjs && node --check mailer.mjs",
+    "smoke": "node test/smoke.mjs",
+    "disk:check": "node --env-file-if-exists=.env tools/check-disk.mjs",
+    "mail:check": "node --env-file-if-exists=.env tools/check-mail.mjs"
+  },
+  "dependencies": {
+    "nodemailer": "^7.0.9"
+  }
+}

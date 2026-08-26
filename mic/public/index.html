@@ -1,0 +1,666 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Заявка в техподдержку МИС</title>
+<style>
+  :root{
+    --navy:#1f3a5f;--blue:#2e5e8c;--light:#eaf0f6;--grey:#5a6570;--red:#b3261e;
+    --green:#2e7d32;--amber:#b26a00;--ink:#1a1f26;--line:#d3dae2;--bg:#eef2f6;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PT Sans",Arial,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.4;padding-bottom:40px}
+  .wrap{max-width:560px;margin:0 auto;padding:0 14px}
+  .head{background:var(--navy);color:#fff;padding:20px 20px 22px;border-radius:0 0 16px 16px;
+    margin:0 -14px 16px;box-shadow:0 4px 18px rgba(31,58,95,.2)}
+  .head h1{margin:0;font-size:20px}
+  .head p{margin:5px 0 0;color:#cddaeb;font-size:13.5px}
+  .head .sla{margin-top:12px;display:flex;gap:6px;flex-wrap:wrap}
+  .chip{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25);
+    color:#eaf2fb;font-size:11.5px;padding:3px 9px;border-radius:20px}
+  form{background:#fff;border-radius:14px;padding:6px 16px 18px;box-shadow:0 2px 10px rgba(0,0,0,.05)}
+  .f{margin-top:15px}
+  label{display:block;font-size:13.5px;font-weight:700;color:var(--navy);margin-bottom:5px}
+  label .req{color:var(--red)}
+  .hint{font-weight:400;color:var(--grey);font-size:12px}
+  input[type=text],textarea,select{width:100%;border:1.5px solid var(--line);border-radius:10px;
+    padding:11px 12px;font-size:15px;font-family:inherit;background:#fbfcfe;color:var(--ink);outline:none}
+  input:focus,textarea:focus,select:focus{border-color:var(--blue);background:#fff;
+    box-shadow:0 0 0 3px rgba(46,94,140,.12)}
+  textarea{resize:vertical;min-height:64px}
+  .row{display:flex;gap:10px}.row>div{flex:1}
+  .seg{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
+  .seg label{display:flex;align-items:center;gap:7px;font-weight:500;color:var(--ink);
+    border:1.5px solid var(--line);border-radius:10px;padding:9px 12px;cursor:pointer;
+    flex:1;min-width:150px;margin:0;font-size:13.5px;background:#fbfcfe}
+  .seg input{margin:0}
+  .seg label:has(input:checked){border-color:var(--blue);background:#eef4fa}
+  .seg .d0:has(input:checked){border-color:var(--red);background:#fbf0ef}
+  .seg .d1:has(input:checked){border-color:var(--amber);background:#fbf3e8}
+  .seg .d2:has(input:checked){border-color:var(--blue);background:#eef4fa}
+  .err{color:var(--red);font-size:12px;margin-top:4px;display:none}
+  .f.invalid input,.f.invalid textarea,.f.invalid select{border-color:var(--red);background:#fdf6f5}
+  .f.invalid .err{display:block}
+  .f.invalid .drop{border-color:var(--red)}
+  /* uploader */
+  .drop{border:1.5px dashed var(--blue);border-radius:10px;padding:16px 13px;text-align:center;
+    color:var(--blue);font-size:13.5px;background:#f5f9fd;cursor:pointer;display:block;transition:.15s}
+  .drop:hover{background:#eef4fa}
+  .drop.over{background:#e3eef9;border-color:var(--navy);color:var(--navy)}
+  .drop b{display:block;font-size:14.5px;margin-bottom:3px}
+  .drop span{color:var(--grey);font-size:12px}
+  .drop input{display:none}
+  .files{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+  .fi{border:1.5px solid var(--line);border-radius:10px;padding:9px 10px;background:#fbfcfe;font-size:13px}
+  .fi.done{border-color:#bfe0c2;background:#f4faf5}
+  .fi.fail{border-color:#e8bfbc;background:#fdf6f5}
+  .fi .top{display:flex;align-items:center;gap:8px}
+  .fi .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+  .fi .sz{color:var(--grey);font-size:12px;white-space:nowrap}
+  .fi .x{border:none;background:none;color:var(--grey);font-size:17px;line-height:1;cursor:pointer;
+    padding:0 2px;font-family:inherit}
+  .fi .x:hover{color:var(--red)}
+  .bar{height:4px;border-radius:4px;background:var(--light);margin-top:7px;overflow:hidden}
+  .bar i{display:block;height:100%;width:0;background:var(--blue);transition:width .2s}
+  .fi.done .bar i{background:var(--green)}
+  .fi.fail .bar i{background:var(--red)}
+  .fi .st{margin-top:5px;font-size:11.5px;color:var(--grey);display:flex;justify-content:space-between;gap:8px}
+  .fi.fail .st{color:var(--red)}
+  .fi .retry{border:none;background:none;color:var(--blue);font:inherit;font-size:11.5px;cursor:pointer;padding:0;text-decoration:underline}
+  .fcount{margin-top:8px;font-size:12px;color:var(--grey);text-align:right}
+  .submit{margin-top:20px;width:100%;background:var(--navy);color:#fff;border:none;border-radius:11px;
+    padding:15px;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit}
+  .submit:hover{background:#274b78}
+  .submit:disabled{background:#8c9bb0;cursor:progress}
+  .note{font-size:12px;color:var(--grey);text-align:center;margin-top:10px}
+  .formerr{margin-top:12px;background:#fdf6f5;border:1.5px solid #e8bfbc;color:var(--red);
+    border-radius:10px;padding:10px 12px;font-size:13px;display:none}
+  .formerr.show{display:block}
+  /* result */
+  .result{display:none;background:#fff;border-radius:14px;padding:18px 16px;
+    box-shadow:0 2px 10px rgba(0,0,0,.05);margin-top:2px}
+  .result.show{display:block}
+  .ok{display:flex;align-items:center;gap:10px;color:var(--green);font-weight:700;font-size:17px}
+  .ok .tick{width:26px;height:26px;border-radius:50%;background:var(--green);color:#fff;
+    display:grid;place-items:center;font-size:15px}
+  .ticket{margin-top:14px;background:#f3f7fb;border-left:5px solid var(--blue);border-radius:0 8px 8px 0;
+    padding:13px 15px;font-size:13.5px;white-space:pre-wrap;line-height:1.5;
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+  .rbtns{display:flex;gap:10px;margin-top:14px}
+  .rbtns button{flex:1;border-radius:10px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit}
+  .copy{background:var(--blue);color:#fff;border:none}
+  .again{background:#fff;color:var(--navy);border:1.5px solid var(--line)}
+  .warn{margin-top:12px;background:#fbf3e8;border:1.5px solid #e6cfa8;color:#7a4a00;
+    border-radius:10px;padding:10px 12px;font-size:13px;display:none}
+  .warn.show{display:block}
+  .flink{margin-top:10px;font-size:13px}
+  .flink a{color:var(--blue)}
+  .prio-badge{display:inline-block;padding:2px 10px;border-radius:20px;color:#fff;font-size:12px;font-weight:700}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <h1>Заявка в техподдержку МИС</h1>
+      <p>Заполните поля — чем точнее, тем быстрее решим. Все поля со звёздочкой обязательны.</p>
+      <div class="sla">
+        <span class="chip">P0 полный отказ — 1 час</span>
+        <span class="chip">Критично — 4 часа</span>
+        <span class="chip">Средне — 4 дня</span>
+      </div>
+    </div>
+
+    <form id="form" novalidate>
+      <div class="row">
+        <div class="f" data-req><label>Клиника / площадка <span class="req">*</span></label>
+          <select id="clinic">
+            <option value="">— выберите —</option>
+            <option>Медгород</option>
+            <option>Нефтяник — поликлиника</option>
+            <option>Нефтяник — стационар</option>
+            <option>ТГМУ</option>
+            <option>Нигинского</option>
+            <option>Здоровье</option>
+            <option>Юнимед</option>
+          </select><div class="err">Укажите клинику</div>
+        </div>
+        <div class="f" data-req><label>Модуль МИС <span class="req">*</span></label>
+          <select id="module">
+            <option value="">— выберите —</option>
+            <option>ЭМК</option>
+            <option>Локус (регистратура/расписание)</option>
+            <option>Касса</option>
+            <option>ЛИС (лаборатория)</option>
+            <option>Аптека</option>
+            <option>Отчётность / реестры</option>
+            <option>Другое</option>
+          </select><div class="err">Укажите модуль</div>
+        </div>
+      </div>
+
+      <div class="f" data-req><label>Пользователь <span class="req">*</span> <span class="hint">— ФИО и логин/код</span></label>
+        <input id="user" type="text" placeholder="Халидуллина А. Б. / логин 742" autocomplete="off">
+        <div class="err">Укажите ФИО и логин</div>
+      </div>
+
+      <div class="f"><label>Пациент <span class="hint">— номер карты / ID, без ФИО</span></label>
+        <input id="patient" type="text" placeholder="СУРОА61" autocomplete="off">
+      </div>
+
+      <div class="f" data-req><label>Суть ошибки <span class="req">*</span> <span class="hint">— одной фразой</span></label>
+        <input id="title" type="text" placeholder="Пропал редактор онкодиагнозов" autocomplete="off">
+        <div class="err">Опишите суть ошибки</div>
+      </div>
+
+      <div class="f" data-req><label>Шаги воспроизведения <span class="req">*</span> <span class="hint">— по пунктам, что нажимали</span></label>
+        <textarea id="steps" placeholder="1. Войти в ЭМК под пользователем 742&#10;2. Открыть «Журнал госпитализации» → карту СУРОА61&#10;3. Начать осмотр → Заключительный осмотр&#10;4. Развернуть «Диагнозы» → ПКМ на диагноз"></textarea>
+        <div class="err">Опишите шаги</div>
+      </div>
+
+      <div class="row">
+        <div class="f" data-req><label>Что получилось <span class="req">*</span></label>
+          <textarea id="fact" placeholder="Открылся редактор обычного диагноза"></textarea>
+          <div class="err">Заполните</div>
+        </div>
+        <div class="f" data-req><label>Что ожидали <span class="req">*</span></label>
+          <textarea id="expect" placeholder="Открылся редактор онкодиагноза"></textarea>
+          <div class="err">Заполните</div>
+        </div>
+      </div>
+
+      <div class="f" id="fileField">
+        <label>Скриншоты, видео, логи <span class="hint">— до <b id="maxFiles">10</b> файлов, до <b id="maxSize">100</b> МБ каждый</span></label>
+        <label class="drop" id="drop" for="file">
+          <b id="dropTitle">📎 Прикрепить файлы</b>
+          <span>перетащите сюда или нажмите — фото экрана, запись видео, выгрузка лога</span>
+          <input id="file" type="file" multiple>
+        </label>
+        <ul class="files" id="fileList"></ul>
+        <div class="fcount" id="fileCount" hidden></div>
+      </div>
+
+      <div class="f" data-req><label>Насколько срочно <span class="req">*</span></label>
+        <div class="seg" id="urgency">
+          <label class="d0"><input type="radio" name="urg" value="Блокирует работу (полный отказ)">Блокирует работу</label>
+          <label class="d1"><input type="radio" name="urg" value="Мешает, есть обходной путь">Мешает работать</label>
+          <label class="d2"><input type="radio" name="urg" value="Незначительно / пожелание">Незначительно</label>
+        </div><div class="err">Оцените срочность</div>
+      </div>
+
+      <div class="f" data-req><label>Контакт для связи <span class="req">*</span></label>
+        <input id="contact" type="text" placeholder="+7 ... / мессенджер" autocomplete="off">
+        <div class="err">Укажите контакт</div>
+      </div>
+
+      <button type="submit" class="submit" id="submitBtn">Отправить заявку</button>
+      <div class="formerr" id="formErr"></div>
+      <div class="note">Заявка регистрируется с автоматическим приоритетом и SLA. Файлы сохраняются в защищённое хранилище — авторизация не требуется.</div>
+    </form>
+
+    <div class="result" id="result">
+      <div class="ok"><span class="tick">✓</span> Заявка принята</div>
+      <p style="font-size:13.5px;color:var(--grey);margin:8px 0 0">Номер: <b id="ticketNo" style="color:var(--ink)"></b> · Приоритет: <span class="prio-badge" id="prioBadge"></span></p>
+      <div class="warn" id="warn"></div>
+      <div class="flink" id="flink" hidden></div>
+      <div class="ticket" id="ticketText"></div>
+      <div class="rbtns">
+        <button class="copy" id="copyBtn">Скопировать текст</button>
+        <button class="again" id="againBtn">Новая заявка</button>
+      </div>
+      <div class="note">Сохраните номер заявки — по нему инженер найдёт обращение и приложенные файлы.</div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  'use strict';
+
+  var MAX_FILES = 10, MAX_MB = 100, MAX_BYTES = MAX_MB * 1024 * 1024;
+  var form = document.getElementById('form');
+  var reqBlocks = [].slice.call(document.querySelectorAll('.f[data-req]'));
+  var fileField = document.getElementById('fileField');
+  var fileInput = document.getElementById('file');
+  var drop = document.getElementById('drop');
+  var listEl = document.getElementById('fileList');
+  var countEl = document.getElementById('fileCount');
+  var submitBtn = document.getElementById('submitBtn');
+  var formErr = document.getElementById('formErr');
+
+  var sessionId = null;
+  var sessionPromise = null;
+  var uploadMode = 'auto';   // auto → пробуем прямой PUT в Яндекс, при блокировке → 'proxy'
+  var PARALLEL = 2;          // клиники сидят на узких каналах — не душим их всеми файлами разом
+  var queue = [];
+  var items = [];          // {file, el, bar, st, state, fileId, xhr}
+  var uploading = 0;
+
+  /* ---------- утилиты ---------- */
+
+  function human(bytes){
+    if (bytes < 1024) return bytes + ' Б';
+    if (bytes < 1048576) return (bytes/1024).toFixed(0) + ' КБ';
+    return (bytes/1048576).toFixed(bytes < 10485760 ? 1 : 0) + ' МБ';
+  }
+
+  // Форма может быть смонтирована не в корне (например, http://IP/zayavka/),
+  // поэтому все запросы строим от адреса самой страницы.
+  var API_BASE = location.pathname.replace(/[^/]*$/, '');
+  var url = function(path){ return API_BASE + path.replace(/^\//, ''); };
+
+  function api(path, body){
+    return fetch(url(path), {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    }).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(j){
+        if (!r.ok) throw new Error(j.error || ('Ошибка сервера ' + r.status));
+        return j;
+      });
+    });
+  }
+
+  function showErr(msg){
+    formErr.textContent = msg;
+    formErr.classList.add('show');
+  }
+  function hideErr(){ formErr.classList.remove('show'); }
+
+  /* ---------- список файлов ---------- */
+
+  function activeItems(){ return items.filter(function(i){ return i.state !== 'removed'; }); }
+
+  function renderCount(){
+    var n = activeItems().length;
+    countEl.hidden = n === 0;
+    countEl.textContent = n + ' из ' + MAX_FILES + ' файлов';
+    document.getElementById('dropTitle').textContent =
+      n ? '📎 Добавить ещё файл' : '📎 Прикрепить файлы';
+  }
+
+  function makeRow(item){
+    var li = document.createElement('li');
+    li.className = 'fi';
+    li.innerHTML =
+      '<div class="top">' +
+        '<span class="nm"></span>' +
+        '<span class="sz"></span>' +
+        '<button type="button" class="x" title="Убрать">✕</button>' +
+      '</div>' +
+      '<div class="bar"><i></i></div>' +
+      '<div class="st"><span class="msg">В очереди…</span><span class="act"></span></div>';
+    li.querySelector('.nm').textContent = item.file.name;
+    li.querySelector('.sz').textContent = human(item.file.size);
+    li.querySelector('.x').addEventListener('click', function(){ removeItem(item); });
+    listEl.appendChild(li);
+    item.el = li;
+    item.bar = li.querySelector('.bar i');
+    item.msg = li.querySelector('.msg');
+    item.act = li.querySelector('.act');
+  }
+
+  function setState(item, state, msg){
+    item.state = state;
+    item.el.classList.toggle('done', state === 'done');
+    item.el.classList.toggle('fail', state === 'fail');
+    item.msg.textContent = msg;
+    item.act.innerHTML = '';
+    if (state === 'fail'){
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'retry'; b.textContent = 'Повторить';
+      b.addEventListener('click', function(){ startUpload(item); });
+      item.act.appendChild(b);
+    }
+  }
+
+  function removeItem(item){
+    release(item);
+    if (item.xhr) { try { item.xhr.abort(); } catch(e){} }
+    var finish = function(){
+      item.state = 'removed';
+      queue = queue.filter(function(q){ return q !== item; });
+      if (item.el && item.el.parentNode) item.el.parentNode.removeChild(item.el);
+      renderCount();
+    };
+    if (item.fileId && sessionId){
+      api('/api/remove-file', {sessionId: sessionId, fileId: item.fileId}).catch(function(){});
+    }
+    finish();
+  }
+
+  /* ---------- загрузка ---------- */
+
+  function ensureSession(){
+    if (sessionId) return Promise.resolve(sessionId);
+    if (!sessionPromise){
+      sessionPromise = api('/api/session', {}).then(function(r){
+        sessionId = r.sessionId;
+        return sessionId;
+      }).catch(function(err){
+        sessionPromise = null;   // дать следующему файлу шанс
+        throw err;
+      });
+    }
+    return sessionPromise;
+  }
+
+  function release(item){
+    if (!item.counted) return;
+    item.counted = false;
+    uploading--;
+    updateSubmit();
+  }
+
+  function startUpload(item){
+    setState(item, 'wait', 'В очереди…');
+    item.bar.style.width = '0%';
+    queue.push(item);
+    item.counted = true;
+    uploading++;
+    updateSubmit();
+    pump();
+  }
+
+  function pump(){
+    var running = items.filter(function(i){ return i.state === 'run'; }).length;
+    while (running < PARALLEL && queue.length){
+      var next = queue.shift();
+      if (next.state !== 'wait') continue;   // успели удалить, пока стоял в очереди
+      running++;
+      runUpload(next);
+    }
+  }
+
+  function runUpload(item){
+    setState(item, 'run', 'Подготовка…');
+
+    ensureSession()
+      .then(function(){
+        return api('/api/upload-url', {sessionId: sessionId, name: item.file.name, size: item.file.size});
+      })
+      .then(function(res){
+        item.fileId = res.fileId;
+        return putFile(item, res.href);
+      })
+      .then(function(){
+        return api('/api/upload-done', {sessionId: sessionId, fileId: item.fileId});
+      })
+      .then(function(){
+        item.bar.style.width = '100%';
+        setState(item, 'done', 'Загружено');
+      })
+      .catch(function(err){
+        setState(item, 'fail', err && err.message ? err.message : 'Не удалось загрузить');
+      })
+      .then(function(){
+        release(item);
+        pump();
+      });
+  }
+
+  function proxyUrl(item){
+    return url('/api/upload-proxy') + '?sessionId=' + encodeURIComponent(sessionId) +
+           '&fileId=' + encodeURIComponent(item.fileId);
+  }
+
+  // Прямой PUT в Яндекс — быстрый путь: файл не проходит через наш сервер.
+  // Если браузеру запрещён кросс-доменный запрос, XHR падает без статуса —
+  // тогда переключаемся на резервный канал через сервер и больше не пробуем прямой.
+  function putFile(item, href){
+    var direct = uploadMode !== 'proxy';
+    return putVia(item, direct ? href : proxyUrl(item)).catch(function(err){
+      if (!direct || !err || !err.network) throw err;
+      uploadMode = 'proxy';
+      item.msg.textContent = 'Резервный канал…';
+      item.bar.style.width = '0%';
+      return putVia(item, proxyUrl(item));
+    });
+  }
+
+  function putVia(item, url){
+    return new Promise(function(resolve, reject){
+      var xhr = new XMLHttpRequest();
+      item.xhr = xhr;
+      xhr.open('PUT', url, true);
+      xhr.upload.addEventListener('progress', function(e){
+        if (!e.lengthComputable) return;
+        var pct = Math.round(e.loaded / e.total * 100);
+        item.bar.style.width = pct + '%';
+        item.msg.textContent = 'Загрузка… ' + pct + '%';
+      });
+      xhr.addEventListener('load', function(){
+        item.xhr = null;
+        if (xhr.status >= 200 && xhr.status < 300) return resolve();
+        if (xhr.status === 413) return reject(new Error('Файл больше ' + MAX_MB + ' МБ'));
+        if (xhr.status === 507) return reject(new Error('В хранилище закончилось место'));
+        reject(new Error('Хранилище отклонило файл (' + xhr.status + ')'));
+      });
+      xhr.addEventListener('error', function(){
+        item.xhr = null;
+        var e = new Error('Обрыв связи при загрузке');
+        e.network = true;          // сюда же попадает блокировка CORS
+        reject(e);
+      });
+      xhr.addEventListener('abort', function(){ item.xhr = null; reject(new Error('Загрузка отменена')); });
+      xhr.send(item.file);
+    });
+  }
+
+  function addFiles(fileList){
+    hideErr();
+    var incoming = [].slice.call(fileList);
+    var free = MAX_FILES - activeItems().length;
+
+    if (free <= 0){
+      showErr('Уже прикреплено ' + MAX_FILES + ' файлов — больше нельзя. Уберите лишний, чтобы добавить новый.');
+      return;
+    }
+    if (incoming.length > free){
+      showErr('Можно прикрепить ещё ' + free + ' — остальные файлы не добавлены (лимит ' + MAX_FILES + ').');
+      incoming = incoming.slice(0, free);
+    }
+
+    incoming.forEach(function(file){
+      if (file.size === 0){
+        showErr('Файл «' + file.name + '» пустой — пропущен.');
+        return;
+      }
+      var dup = activeItems().some(function(i){
+        return i.file.name === file.name && i.file.size === file.size;
+      });
+      if (dup) return;
+
+      var item = {file: file, state: 'new', fileId: null, xhr: null};
+      items.push(item);
+      makeRow(item);
+
+      if (file.size > MAX_BYTES){
+        setState(item, 'fail', 'Больше ' + MAX_MB + ' МБ — не загружается');
+        item.act.innerHTML = '';
+        item.bar.style.width = '100%';
+      } else {
+        startUpload(item);
+      }
+    });
+
+    renderCount();
+    fileField.classList.remove('invalid');
+  }
+
+  fileInput.addEventListener('change', function(e){
+    addFiles(e.target.files);
+    fileInput.value = '';   // чтобы тот же файл можно было выбрать снова
+  });
+
+  ['dragenter','dragover'].forEach(function(ev){
+    drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave','drop'].forEach(function(ev){
+    drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.remove('over'); });
+  });
+  drop.addEventListener('drop', function(e){
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+  });
+  // чтобы страница не открывала файл, брошенный мимо зоны
+  window.addEventListener('dragover', function(e){ e.preventDefault(); });
+  window.addEventListener('drop', function(e){ e.preventDefault(); });
+
+  window.addEventListener('beforeunload', function(e){
+    if (uploading > 0){ e.preventDefault(); e.returnValue = ''; }
+  });
+
+  /* ---------- валидация полей ---------- */
+
+  function valOf(f){
+    var el = f.querySelector('input[type=text],textarea,select');
+    if (el) return el.value.trim();
+    var r = f.querySelector('input[type=radio]:checked');
+    return r ? r.value : '';
+  }
+  function markValid(){
+    var ok = true;
+    reqBlocks.forEach(function(f){
+      if (!valOf(f)){ f.classList.add('invalid'); ok = false; }
+      else f.classList.remove('invalid');
+    });
+    return ok;
+  }
+  reqBlocks.forEach(function(f){
+    var clear = function(){ if (f.classList.contains('invalid') && valOf(f)) f.classList.remove('invalid'); };
+    f.addEventListener('input', clear);
+    f.addEventListener('change', clear);
+  });
+
+  function updateSubmit(){
+    submitBtn.disabled = uploading > 0;
+    submitBtn.textContent = uploading > 0
+      ? 'Файлы загружаются… (' + uploading + ')'
+      : 'Отправить заявку';
+  }
+
+  /* ---------- отправка ---------- */
+
+  form.addEventListener('submit', function(e){
+    e.preventDefault();
+    hideErr();
+
+    if (!markValid()){
+      var first = document.querySelector('.f.invalid');
+      if (first) first.scrollIntoView({behavior:'smooth', block:'center'});
+      return;
+    }
+    if (uploading > 0){
+      showErr('Дождитесь окончания загрузки файлов.');
+      return;
+    }
+
+    var failed = activeItems().filter(function(i){ return i.state === 'fail'; });
+    if (failed.length && !confirm('Часть файлов не загрузилась (' + failed.length + '). Отправить заявку без них?')) return;
+
+    var g = function(id){ return document.getElementById(id).value.trim(); };
+    var urg = (document.querySelector('input[name=urg]:checked') || {}).value || '';
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Отправляем…';
+
+    api('/api/ticket', {
+      sessionId: sessionId,
+      clinic: g('clinic'), module: g('module'), user: g('user'), patient: g('patient'),
+      title: g('title'), steps: g('steps'), fact: g('fact'), expect: g('expect'),
+      urgency: urg, contact: g('contact')
+    }).then(function(res){
+      document.getElementById('ticketNo').textContent = res.ticketNo;
+      var pb = document.getElementById('prioBadge');
+      pb.textContent = res.priority;
+      pb.style.background = /P0|P1/.test(res.priority) ? '#b3261e' : /P2/.test(res.priority) ? '#2e5e8c' : '#5a6570';
+      document.getElementById('ticketText').textContent = res.text;
+
+      var warn = document.getElementById('warn');
+      warn.textContent = res.warning || '';
+      warn.classList.toggle('show', Boolean(res.warning));
+
+      var flink = document.getElementById('flink');
+      if (res.publicUrl){
+        flink.hidden = false;
+        flink.innerHTML = 'Вложения: <a target="_blank" rel="noopener"></a>';
+        var a = flink.querySelector('a');
+        a.href = res.publicUrl;
+        a.textContent = 'открыть папку с файлами';
+      } else {
+        flink.hidden = true;
+      }
+      form.style.display = 'none';
+      var r = document.getElementById('result');
+      r.classList.add('show');
+      r.scrollIntoView({behavior:'smooth', block:'start'});
+    }).catch(function(err){
+      showErr(err && err.message ? err.message : 'Не удалось отправить заявку. Попробуйте ещё раз.');
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Отправить заявку';
+    });
+  });
+
+  /* ---------- результат ---------- */
+
+  document.getElementById('copyBtn').addEventListener('click', function(){
+    var t = document.getElementById('ticketText').textContent;
+    var b = document.getElementById('copyBtn');
+    var done = function(){
+      var o = b.textContent; b.textContent = 'Скопировано ✓';
+      setTimeout(function(){ b.textContent = o; }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t).then(done, done);
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = t; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch(e){}
+      document.body.removeChild(ta); done();
+    }
+  });
+
+  document.getElementById('againBtn').addEventListener('click', function(){
+    form.reset();
+    reqBlocks.forEach(function(f){ f.classList.remove('invalid'); });
+    items.forEach(function(i){ if (i.el && i.el.parentNode) i.el.parentNode.removeChild(i.el); });
+    items = [];
+    sessionId = null;
+    sessionPromise = null;
+    uploadMode = 'auto';
+    uploading = 0;
+    queue = [];
+    hideErr();
+    renderCount();
+    updateSubmit();
+    document.getElementById('warn').classList.remove('show');
+    document.getElementById('flink').hidden = true;
+    document.getElementById('result').classList.remove('show');
+    form.style.display = 'block';
+    window.scrollTo({top:0, behavior:'smooth'});
+  });
+
+  /* ---------- лимиты с сервера ---------- */
+
+  fetch(url('/api/limits')).then(function(r){ return r.json(); }).then(function(h){
+    if (h && h.maxFiles) {
+      MAX_FILES = h.maxFiles;
+      document.getElementById('maxFiles').textContent = MAX_FILES;
+    }
+    if (h && h.maxFileMb) {
+      MAX_MB = h.maxFileMb;
+      MAX_BYTES = MAX_MB * 1024 * 1024;
+      document.getElementById('maxSize').textContent = MAX_MB;
+    }
+    renderCount();
+  }).catch(function(){});
+
+  renderCount();
+  updateSubmit();
+})();
+</script>
+</body>
+</html>
