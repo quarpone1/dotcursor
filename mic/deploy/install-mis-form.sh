@@ -27,7 +27,7 @@ sudo -u deploy bash -lc "cd $APP && npm ci --omit=dev"
 
 # --- настройки ---
 if [ ! -f "$ENV_FILE" ]; then
-  install -m600 "$APP/env.example" "$ENV_FILE"
+  install -m640 -o root -g deploy "$APP/env.example" "$ENV_FILE"
   echo
   echo "‼  Создан $ENV_FILE — заполните в нём:"
   echo "     YANDEX_DISK_TOKEN=   (токен Яндекс.Диска)"
@@ -36,7 +36,10 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "   и запустите скрипт ещё раз."
   exit 1
 fi
-chmod 600 "$ENV_FILE"
+# Файл читают двое: systemd (от root) и проверочные скрипты (от deploy),
+# поэтому не 600 root, а 640 root:deploy — миру по-прежнему не видно.
+chown root:deploy "$ENV_FILE"
+chmod 640 "$ENV_FILE"
 
 if grep -qE '^(YANDEX_DISK_TOKEN|SMTP_PASS)=\s*$' "$ENV_FILE"; then
   echo "‼  В $ENV_FILE не заполнены токен Диска или пароль почты."
