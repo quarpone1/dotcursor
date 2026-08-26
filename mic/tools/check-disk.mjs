@@ -30,6 +30,8 @@ const step = (ok, msg, extra = '') => {
   console.log(`${ok ? '✓' : '✗'} ${msg}${extra ? ' — ' + extra : ''}`);
   if (!ok) failed = true;
 };
+// Замечание, а не поломка: деплой из-за него останавливаться не должен.
+const warn = (msg, extra = '') => console.log(`⚠ ${msg}${extra ? ' — ' + extra : ''}`);
 
 /* 1. Токен и место */
 const info = await yd('GET', '/');
@@ -45,7 +47,7 @@ step(true, `Место: занято ${gb(info.json.used_space)} из ${gb(info.
 const perTicket = Number(process.env.MAX_FILES || 10) * Number(process.env.MAX_FILE_MB || 100) / 1024;
 const tickets = Math.floor(free / 1024 ** 3 / perTicket);
 if (tickets < 20) {
-  step(false, `Свободного места хватит примерно на ${tickets} «тяжёлых» заявок по ${perTicket.toFixed(1)} ГБ`,
+  warn(`Свободного места хватит примерно на ${tickets} «тяжёлых» заявок по ${perTicket.toFixed(1)} ГБ`,
     'стоит расширить тариф или чистить старые папки');
 } else {
   step(true, `Запас: примерно ${tickets} заявок максимального размера`);
@@ -95,5 +97,5 @@ step(del.ok || del.status === 202 || del.status === 204, 'Тестовая па�
 
 console.log(failed
   ? '\nЕсть проблемы — смотрите строки со знаком ✗'
-  : '\nДиск настроен верно.');
+  : '\nДиск настроен верно.' + (tickets < 20 ? ' Замечание выше (⚠) деплою не мешает.' : ''));
 process.exit(failed ? 1 : 0);
