@@ -5,10 +5,11 @@ import { createServer } from 'node:http';
 import http from 'node:http';
 import https from 'node:https';
 import { readFile, mkdir, appendFile } from 'node:fs/promises';
-import { randomInt, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sendTicketMail, collectAttachments, verifyMail, mailConfigured } from './mailer.mjs';
+import { ticketNumber, priorityOf, ticketText } from './ticket.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -149,10 +150,6 @@ function rateOk(ip) {
   return true;
 }
 
-function ticketNumber() {
-  return `ТП-${new Date().getFullYear()}-${randomInt(1000, 10000)}`;
-}
-
 function folderFor(ticketNo) {
   const d = new Date();
   const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -213,43 +210,6 @@ const STATIC = {
 };
 
 const str = (v, max = 4000) => String(v ?? '').replace(/\r\n/g, '\n').trim().slice(0, max);
-
-function priorityOf(urg) {
-  if (/Блокирует/.test(urg)) return ['P0/P1 — критично', '1 час / 4 часа'];
-  if (/Мешает/.test(urg)) return ['P2 — средний', '4 дня'];
-  return ['P3/P4 — низкий', 'по плану релизов'];
-}
-
-function ticketText(s, f) {
-  const pr = priorityOf(f.urgency);
-  const files = s.files.filter((x) => x.uploaded);
-  return [
-    `Заявка ${s.ticketNo}`,
-    `Создана: ${new Date().toLocaleString('ru-RU')}`,
-    `Приоритет (предварительный): ${pr[0]} · SLA ${pr[1]}`,
-    '',
-    `Клиника: ${f.clinic}`,
-    `Модуль: ${f.module}`,
-    `Пользователь: ${f.user}`,
-    ...(f.patient ? [`Пациент: ${f.patient}`] : []),
-    '',
-    `Ошибка: ${f.title}`,
-    '',
-    'Шаги воспроизведения:',
-    f.steps,
-    '',
-    `Фактический результат: ${f.fact}`,
-    `Ожидаемый результат: ${f.expect}`,
-    '',
-    `Срочность (заявитель): ${f.urgency}`,
-    `Контакт: ${f.contact}`,
-    '',
-    files.length ? `Вложения (${files.length}):` : 'Вложения: нет',
-    ...files.map((x) => `  · ${x.diskName} — ${(x.size / 1048576).toFixed(1)} МБ`),
-    '',
-    `Папка на Яндекс.Диске: ${s.folder}`,
-  ].join('\n');
-}
 
 const routes = {
   // Сессию заводим одним запросом до первой загрузки, иначе параллельные
@@ -391,7 +351,13 @@ const routes = {
 
     const uploaded = session.files.filter((x) => x.uploaded);
     const pr = priorityOf(f.urgency);
-    const text = ticketText(session, f);
+    const text = ticketText({
+      ticketNo: session.ticketNo,
+      fields: f,
+      files: uploaded.map((x) => ({ name: x.diskName, size: x.size })),
+      folder: session.folder,
+      source: 'веб-форма',
+    });
 
     await uploadText(`${session.folder}/заявка.txt`, text);
     session.submitted = true;

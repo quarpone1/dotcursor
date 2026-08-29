@@ -12,7 +12,9 @@
     "smoke": "node test/smoke.mjs",
     "disk:check": "node --env-file-if-exists=.env tools/check-disk.mjs",
     "mail:check": "node --env-file-if-exists=.env tools/check-mail.mjs",
-    "max:check": "node --env-file-if-exists=.env tools/check-max.mjs"
+    "max:check": "node --env-file-if-exists=.env tools/check-max.mjs",
+    "dialog:test": "node test/dialog.test.mjs",
+    "dialog:demo": "node tools/dialog-demo.mjs"
   },
   "dependencies": {
     "nodemailer": "^7.0.9"
