@@ -12,6 +12,8 @@ const TOKEN = process.env.PLANFIX_API_TOKEN;
 const ACCOUNT = process.env.PLANFIX_ACCOUNT || 'sensey';
 const BASE = process.env.PLANFIX_API_BASE || `https://${ACCOUNT}.planfix.ru/rest`;
 const TEMPLATE_ID = Number(process.env.PLANFIX_TEMPLATE_ID || 1);
+// Проект, в который складываются заявки из MAX. Пусто — задача ляжет без проекта.
+const PROJECT_ID = Number(process.env.PLANFIX_PROJECT_ID || 0);
 
 // Кого назначать исполнителями. По умолчанию — те же, кого ставит канал.
 const ASSIGNEES = (process.env.PLANFIX_ASSIGNEES || 'user:63,user:1,user:43,user:7')
@@ -91,6 +93,7 @@ export async function createTask({ name, description, contactId }) {
     template: { id: TEMPLATE_ID },
     assignees: { users: ASSIGNEES.map((id) => ({ id })) },
   };
+  if (PROJECT_ID) body.project = { id: PROJECT_ID };
   if (contactId) {
     const ref = { id: `contact:${contactId}` };
     body.counterparty = ref;   // клиент, по нему Planfix адресует ответ

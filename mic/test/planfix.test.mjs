@@ -6,6 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 const PORT = 3495;
 process.env.PLANFIX_API_TOKEN = 'test-token';
 process.env.PLANFIX_API_BASE = `http://127.0.0.1:${PORT}`;
+process.env.PLANFIX_PROJECT_ID = '4242';
 
 let failed = 0;
 const check = (name, cond, extra = '') => {
@@ -71,6 +72,7 @@ try {
   check('исполнители проставлены', (body.assignees?.users || []).length === 4,
     JSON.stringify(body.assignees));
   check('шаблон как у задач канала', body.template?.id === 1, JSON.stringify(body.template));
+  check('задача кладётся в заданный проект', body.project?.id === 4242, JSON.stringify(body.project));
 
   console.log('\n3. Задача без контакта');
   await createTask({ name: 'ничья', description: 'x', contactId: null });
