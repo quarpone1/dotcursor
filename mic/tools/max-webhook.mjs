@@ -81,17 +81,30 @@ if (setUrl) {
     console.error('✗ MAX принимает только HTTPS с сертификатом доверенного центра.');
     process.exit(1);
   }
-  const planfix = current.find((s) => /planfix/i.test(s.url)) || current[0];
-  if (planfix) {
+  // Бэкапим только чужой вебхук. Иначе повторный --set затрёт точку отката
+  // нашим же адресом, и откатываться будет некуда.
+  const previous = current.find((s) => s.url !== setUrl && /planfix/i.test(s.url))
+    || current.find((s) => s.url !== setUrl);
+  if (previous) {
     await mkdir(dirname(BACKUP), { recursive: true });
-    await writeFile(BACKUP, JSON.stringify(planfix, null, 1), 'utf8');
+    await writeFile(BACKUP, JSON.stringify(previous, null, 1), 'utf8');
     console.log(`\n✓ Прежний вебхук сохранён в ${BACKUP}`);
-    console.log(`  ${planfix.url}`);
+    console.log(`  ${previous.url}`);
     console.log('\n  Откат в любой момент:  npm run max:webhook -- --restore');
+  } else if (await readBackup()) {
+    console.log('\n· Точка отката уже сохранена ранее, не трогаю её.');
   }
 
+  // Нажатия кнопок приходят как message_callback. Без этого типа бот получит
+  // первое сообщение, покажет вопрос — и намертво замрёт на кнопках.
+  const types = Array.from(new Set([
+    ...(previous?.update_types || current[0]?.update_types || []),
+    'message_created', 'message_callback', 'bot_started', 'bot_added',
+  ]));
+
   console.log(`\n→ Ставлю ${setUrl}`);
-  await api.subscribe(setUrl, planfix?.update_types);
+  console.log(`  типы событий: ${types.join(', ')}`);
+  await api.subscribe(setUrl, types);
 
   for (const s of current) {
     if (s.url !== setUrl) { await api.unsubscribe(s.url); console.log(`  снял ${s.url}`); }
