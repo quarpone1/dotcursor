@@ -14,6 +14,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MaxApi, parseUpdate } from './max-api.mjs';
 import { createSession, start, handle, summary } from './dialog.mjs';
+import { createTask, findContact, taskName, planfixConfigured } from './planfix.mjs';
+import { priorityOf } from '../ticket.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -86,6 +88,35 @@ async function forwardRaw(update) {
   }
 }
 
+// Контакт человека в Planfix ищем по имени и запоминаем: список контактов
+// не маленький, дёргать его на каждую заявку незачем.
+const contactCache = new Map();
+
+async function resolveContact(session) {
+  const userId = session.user?.id;
+  if (contactCache.has(userId)) return contactCache.get(userId);
+  const found = await findContact(session.user?.name).catch((err) => {
+    console.error('Поиск контакта не удался:', err.message);
+    return null;
+  });
+  if (found) contactCache.set(userId, found);
+  else console.error(`Контакт для «${session.user?.name}» не найден — задача будет без заказчика.`);
+  return found;
+}
+
+/** Заявка становится ОТДЕЛЬНОЙ задачей в Planfix. */
+async function createPlanfixTask(session) {
+  const [priority] = priorityOf(session.answers.urgency);
+  const contact = await resolveContact(session);
+  const id = await createTask({
+    name: taskName({ ticketNo: session.ticketNo, priority, fields: session.answers }),
+    description: summary(session).replace(/\n/g, '<br>'),
+    contactId: contact?.id,
+  });
+  console.log(`${session.ticketNo} → задача Planfix ${id}${contact ? ` (контакт ${contact.id})` : ''}`);
+  return id;
+}
+
 /** Собранная заявка уходит как одно «сообщение пользователя» — задача создастся целиком. */
 async function deliverTicket(session) {
   const card = summary(session);
@@ -93,6 +124,18 @@ async function deliverTicket(session) {
   if (MODE !== 'webhook') {
     console.log(`\n─── ${session.ticketNo}: в Planfix ушло бы это ───\n${card}\n`);
     return true;
+  }
+
+  // Основной путь: отдельная задача через API. Прежняя пересылка в канал
+  // остаётся страховкой — если API недоступен, заявка всё равно дойдёт.
+  if (planfixConfigured) {
+    try {
+      await createPlanfixTask(session);
+      for (const raw of session.pendingAttachments || []) await forwardRaw(raw);
+      return true;
+    } catch (err) {
+      console.error('Не удалось создать задачу через API, пересылаю в канал:', err.message);
+    }
   }
 
   const sample = session.lastUserUpdate;
