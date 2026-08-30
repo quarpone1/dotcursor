@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { MaxApi, parseUpdate } from './max-api.mjs';
 import { createSession, start, handle, summary } from './dialog.mjs';
 import { createTask, findContact, taskName, planfixConfigured,
-         uploadFile, newComments, addressedToContact } from './planfix.mjs';
+         uploadFile, newComments, addressedToContact, createContact } from './planfix.mjs';
 import { priorityOf } from '../ticket.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -115,13 +115,24 @@ const contactCache = new Map();
 async function resolveContact(session) {
   const userId = session.user?.id;
   if (contactCache.has(userId)) return contactCache.get(userId);
-  const found = await findContact(session.user?.name).catch((err) => {
+  const name = session.user?.name;
+  let contact = await findContact(name).catch((err) => {
     console.error('Поиск контакта не удался:', err.message);
     return null;
   });
-  if (found) contactCache.set(userId, found);
-  else console.error(`Контакт для «${session.user?.name}» не найден — задача будет без заказчика.`);
-  return found;
+
+  // Не нашли — заводим сами. Иначе задача будет ничья, а ответить человеку некуда.
+  if (!contact && name) {
+    contact = await createContact(name).catch((err) => {
+      console.error(`Не удалось завести контакт «${name}»: ${err.message}`);
+      return null;
+    });
+    if (contact) console.log(`Завёл контакт ${contact.id} для «${name}»`);
+  }
+
+  if (contact) contactCache.set(userId, contact);
+  else console.error(`Контакт для «${name}» не найден и не создан — задача будет без заказчика.`);
+  return contact;
 }
 
 /** Тянет файл из MAX и кладёт его в Planfix. Возвращает id файла или null. */

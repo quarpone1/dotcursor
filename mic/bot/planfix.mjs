@@ -14,6 +14,8 @@ const BASE = process.env.PLANFIX_API_BASE || `https://${ACCOUNT}.planfix.ru/rest
 const TEMPLATE_ID = Number(process.env.PLANFIX_TEMPLATE_ID || 1);
 // Проект, в который складываются заявки из MAX. Пусто — задача ляжет без проекта.
 const PROJECT_ID = Number(process.env.PLANFIX_PROJECT_ID || 0);
+// Шаблон контакта — такой же, как у контактов, заведённых каналом MAX
+const CONTACT_TEMPLATE_ID = Number(process.env.PLANFIX_CONTACT_TEMPLATE_ID || 1);
 
 // Кого назначать исполнителями. По умолчанию — те же, кого ставит канал.
 const ASSIGNEES = (process.env.PLANFIX_ASSIGNEES || 'user:63,user:1,user:43,user:7')
@@ -84,6 +86,24 @@ export async function findContact(fullName) {
  * @param {number|null} p.contactId  контакт автора (без него задача будет ничья)
  * @returns {Promise<number>} id созданной задачи
  */
+/**
+ * Заводит контакт человека, если канал его ещё не создал.
+ * Без контакта задача остаётся ничьей, а ответить человеку некуда.
+ */
+export async function createContact(fullName) {
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return null;
+  const [name, ...rest] = parts;
+  const res = await pf('POST', '/contact/', {
+    template: { id: CONTACT_TEMPLATE_ID },
+    name,
+    lastname: rest.join(' '),
+    description: 'Заведён ботом заявок из MAX.',
+  });
+  const id = res?.id ?? null;
+  return id ? { id, name, lastname: rest.join(' ') } : null;
+}
+
 /** Загружает файл в Planfix. Возвращает id, который цепляется к задаче. */
 export async function uploadFile(buffer, filename) {
   const fd = new FormData();

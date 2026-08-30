@@ -24,6 +24,7 @@ const CONTACTS = [
 
 const created = [];
 const uploaded = [];
+const createdContacts = [];
 
 // Комментарии как в жизни: карточка от контакта, реплики сотрудников,
 // удалённый и адресованный лично клиенту.
@@ -55,6 +56,10 @@ const srv = createServer(async (req, res) => {
     created.push(body);
     return res.end(JSON.stringify({ result: 'success', id: 17000 + created.length }));
   }
+  if (req.url === '/contact/') {
+    createdContacts.push(body);
+    return res.end(JSON.stringify({ result: 'success', id: 990 + createdContacts.length }));
+  }
   if (req.url === '/file/') {
     uploaded.push(req.headers['content-type'] || '');
     return res.end(JSON.stringify({ result: 'success', id: 969000 + uploaded.length }));
@@ -66,8 +71,8 @@ const srv = createServer(async (req, res) => {
 }).listen(PORT, '127.0.0.1');
 
 await sleep(100);
-const { findContact, createTask, taskName, uploadFile, newComments, addressedToContact } =
-  await import('../bot/planfix.mjs');
+const { findContact, createTask, taskName, uploadFile, newComments, addressedToContact,
+  createContact } = await import('../bot/planfix.mjs');
 
 try {
   console.log('\n1. Поиск контакта по имени из MAX');
@@ -148,6 +153,22 @@ try {
     addressedToContact(COMMENTS[2], 971) === true);
   check('без адресатов считается общим',
     addressedToContact({ description: 'x' }, 971) === true);
+  console.log('\n7. Заведение контакта');
+  const made = await createContact('Пётр Петров');
+  check('контакт создан', made?.id === 991, JSON.stringify(made));
+  const cb = createdContacts[0];
+  check('имя и фамилия разложены', cb.name === 'Пётр' && cb.lastname === 'Петров',
+    JSON.stringify({ n: cb.name, l: cb.lastname }));
+  check('шаблон как у контактов канала', cb.template?.id === 1, JSON.stringify(cb.template));
+
+  const triple = await createContact('Халидуллина Анна Борисовна');
+  check('составное имя не теряется',
+    createdContacts[1].name === 'Халидуллина' && createdContacts[1].lastname === 'Анна Борисовна',
+    JSON.stringify(createdContacts[1]));
+
+  const empty = await createContact('   ');
+  check('пустое имя не создаёт контакт', empty === null && createdContacts.length === 2,
+    String(createdContacts.length));
 } finally {
   srv.close();
 }
