@@ -87,11 +87,18 @@ const msg = (text, attachments = []) => ({
   },
 });
 
+// Как в жизни: у события от кнопки в message лежит сообщение БОТА,
+// к которому кнопка приклеена. Отправитель там — бот, а не человек.
+const BOT_ID = 391026515;
 const btn = (payload) => ({
   update_type: 'message_callback',
   timestamp: Date.now(),
   callback: { callback_id: 'cb' + Math.random(), payload, user: { user_id: USER, name: 'Иванов' } },
-  message: { sender: { user_id: USER }, recipient: { chat_id: 777, user_id: USER }, body: { mid: 'm', text: '' } },
+  message: {
+    sender: { user_id: BOT_ID, is_bot: true, name: 'Сопровождение МИЦ' },
+    recipient: { chat_id: 777, user_id: USER },
+    body: { mid: 'bot-msg', seq: 1, text: 'вопрос бота', attachments: [] },
+  },
 });
 
 const lastText = () => sentToUser[sentToUser.length - 1]?.text || '';
@@ -136,8 +143,10 @@ try {
     /Клиника: МедГород/.test(card) && /Модуль: ЭМК/.test(card) &&
     /Не печатается чек/.test(card) && /Ошибка драйвера/.test(card) && /\+7 900/.test(card),
     card.slice(0, 80));
-  check('пакет выглядит как сообщение пользователя',
-    cards[0]?.update_type === 'message_created' && cards[0]?.message?.sender?.user_id === USER);
+  check('пакет отправлен ОТ ИМЕНИ ПОЛЬЗОВАТЕЛЯ, а не бота',
+    cards[0]?.update_type === 'message_created' && cards[0]?.message?.sender?.user_id === USER,
+    `sender=${cards[0]?.message?.sender?.user_id}`);
+  check('в пакете настоящий чат пользователя', cards[0]?.message?.recipient?.chat_id === 777);
 
   const withFiles = forwarded.filter((f) => (f?.message?.body?.attachments || []).length);
   check('вложение доехало отдельным событием', withFiles.length === 1, String(withFiles.length));

@@ -87,7 +87,7 @@ async function forwardRaw(update) {
 }
 
 /** Собранная заявка уходит как одно «сообщение пользователя» — задача создастся целиком. */
-async function deliverTicket(session, sample) {
+async function deliverTicket(session) {
   const card = summary(session);
 
   if (MODE !== 'webhook') {
@@ -95,20 +95,18 @@ async function deliverTicket(session, sample) {
     return true;
   }
 
-  const base = sample?.raw?.message ? structuredClone(sample.raw) : null;
-  if (!base) {
-    console.error('Нет образца события для пересылки — заявка не ушла:', session.ticketNo);
+  const sample = session.lastUserUpdate;
+  if (!sample?.message?.sender) {
+    console.error('Нет настоящего сообщения пользователя для пересылки:', session.ticketNo);
     return false;
   }
+  // Берём подлинное событие и меняем только текст: отправитель, чат и mid
+  // остаются настоящими, иначе Planfix не свяжет задачу с человеком
+  // и ответы инженера будет некуда доставлять.
+  const base = structuredClone(sample);
   base.update_type = 'message_created';
   base.timestamp = Date.now();
-  base.message.body = {
-    ...(base.message.body || {}),
-    mid: `ticket-${session.ticketNo}`,
-    seq: Date.now(),
-    text: card,
-    attachments: [],
-  };
+  base.message.body = { ...(base.message.body || {}), text: card, attachments: [] };
 
   const ok = await forwardRaw(base);
   // вложения досылаем исходными событиями — так они лягут в ту же задачу
@@ -164,6 +162,13 @@ export async function dispatch(update) {
     return;
   }
 
+  // Образец для итогового пакета — только настоящее сообщение пользователя.
+  // У события от кнопки отправитель — бот (кнопка приклеена к его сообщению),
+  // и Planfix по такому пакету не свяжет задачу с человеком.
+  if (ev.kind === 'text' || ev.kind === 'attachment') {
+    session.lastUserUpdate = update;
+  }
+
   // Вложения запоминаем целиком: досылаем их в Planfix вместе с готовой заявкой.
   if (ev.kind === 'attachment') {
     session.pendingAttachments = session.pendingAttachments || [];
@@ -192,7 +197,7 @@ export async function dispatch(update) {
   await reply(ev, result.replies);
 
   if (result.done) {
-    const ok = await deliverTicket(session, ev);
+    const ok = await deliverTicket(session);
     // Кнопка на будущее: после заявки обычные сообщения уходят инженеру,
     // и человеку нужен явный способ начать новую.
     await reply(ev, [{
