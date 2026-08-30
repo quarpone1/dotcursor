@@ -8,8 +8,23 @@ import { fileURLToPath } from 'node:url';
 import { MaxApi } from '../bot/max-api.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const BACKUP = join(process.env.BOT_STATE_DIR || process.env.LOG_DIR || join(ROOT, 'data'),
-  'max-webhook-backup.json');
+// Бэкап ищем во всех местах, где он мог оказаться: скрипт запускают и руками,
+// и из-под сервиса, а переменные окружения при этом разные.
+const BACKUP_DIRS = [
+  process.env.BOT_STATE_DIR,
+  process.env.LOG_DIR,
+  '/var/lib/mis-form',
+  join(ROOT, 'data'),
+].filter(Boolean);
+const BACKUP = join(BACKUP_DIRS[0], 'max-webhook-backup.json');
+
+async function readBackup() {
+  for (const dir of BACKUP_DIRS) {
+    try { return JSON.parse(await readFile(join(dir, 'max-webhook-backup.json'), 'utf8')); }
+    catch { /* пробуем следующее место */ }
+  }
+  return null;
+}
 
 const TOKEN = process.env.MAX_BOT_TOKEN;
 if (!TOKEN) { console.error('✗ MAX_BOT_TOKEN не задан'); process.exit(1); }
@@ -34,9 +49,21 @@ const current = await show();
 
 /* --- откат --- */
 if (restore) {
-  let saved;
-  try { saved = JSON.parse(await readFile(BACKUP, 'utf8')); }
-  catch { console.error(`\n✗ Нет бэкапа ${BACKUP} — нечего откатывать.`); process.exit(1); }
+  const saved = await readBackup();
+  if (!saved) {
+    // Аварийный инструмент не имеет права упереться в пропавший файл.
+    const known = process.env.PLANFIX_WEBHOOK_URL;
+    console.error('\n✗ Бэкап не найден. Искал в:');
+    for (const d of BACKUP_DIRS) console.error('    ' + join(d, 'max-webhook-backup.json'));
+    if (known) {
+      console.error('\n  Но адрес Planfix есть в настройках — откатывайте им:');
+      console.error(`    npm run max:webhook -- --set ${known}`);
+    } else {
+      console.error('\n  Возьмите адрес Planfix в его настройках интеграции и выполните:');
+      console.error('    npm run max:webhook -- --set https://АДРЕС_PLANFIX');
+    }
+    process.exit(1);
+  }
 
   console.log(`\n→ Возвращаю ${saved.url}`);
   await api.subscribe(saved.url, saved.update_types);
