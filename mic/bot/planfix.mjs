@@ -8,6 +8,8 @@
 //   counterparty = контакт человека, assigner = он же, assignees = инженеры.
 // Это важно не для красоты: по контакту Planfix понимает, кому адресовать
 // ответ инженера, и отправляет его в MAX.
+import { CLINIC_ENGINEER } from '../ticket.mjs';
+
 const TOKEN = process.env.PLANFIX_API_TOKEN;
 const ACCOUNT = process.env.PLANFIX_ACCOUNT || 'sensey';
 const BASE = process.env.PLANFIX_API_BASE || `https://${ACCOUNT}.planfix.ru/rest`;
@@ -17,9 +19,23 @@ const PROJECT_ID = Number(process.env.PLANFIX_PROJECT_ID || 0);
 // Шаблон контакта — такой же, как у контактов, заведённых каналом MAX
 const CONTACT_TEMPLATE_ID = Number(process.env.PLANFIX_CONTACT_TEMPLATE_ID || 1);
 
-// Кого назначать исполнителями. По умолчанию — те же, кого ставит канал.
+// Кого ставить, если клиника незнакомая: вся группа, как делал канал.
 const ASSIGNEES = (process.env.PLANFIX_ASSIGNEES || 'user:63,user:1,user:43,user:7')
   .split(',').map((s) => s.trim()).filter(Boolean);
+
+// Переопределение закреплённых инженеров без правки кода:
+// PLANFIX_CLINIC_ASSIGNEES="МедГород=user:1,ГП-1=user:63"
+const OVERRIDES = Object.fromEntries(
+  (process.env.PLANFIX_CLINIC_ASSIGNEES || '')
+    .split(',').map((pair) => pair.split('=').map((x) => x.trim()))
+    .filter(([clinic, user]) => clinic && user),
+);
+
+/** Инженер, закреплённый за клиникой. Незнакомая клиника — вся группа. */
+export function assigneesFor(clinic) {
+  const one = OVERRIDES[clinic] || CLINIC_ENGINEER[clinic];
+  return one ? [one] : ASSIGNEES;
+}
 
 export const planfixConfigured = Boolean(TOKEN);
 
@@ -143,14 +159,14 @@ export function addressedToContact(comment, contactId) {
   return users.some((u) => String(u.id) === `contact:${contactId}`);
 }
 
-export async function createTask({ name, description, contactId, fileIds = [] }) {
+export async function createTask({ name, description, contactId, fileIds = [], clinic = null }) {
   if (!TOKEN) throw new Error('PLANFIX_API_TOKEN не задан');
 
   const body = {
     name: String(name).slice(0, 250),
     description,
     template: { id: TEMPLATE_ID },
-    assignees: { users: ASSIGNEES.map((id) => ({ id })) },
+    assignees: { users: assigneesFor(clinic).map((id) => ({ id })) },
   };
   if (PROJECT_ID) body.project = { id: PROJECT_ID };
   if (fileIds.length) body.files = fileIds.map((id) => ({ id }));

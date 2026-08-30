@@ -170,6 +170,7 @@ async function createPlanfixTask(session) {
     description: summary(session).replace(/\n/g, '<br>'),
     contactId: contact?.id,
     fileIds,
+    clinic: session.answers.clinic,
   });
   console.log(`${session.ticketNo} → задача Planfix ${id}` +
     `${contact ? `, контакт ${contact.id}` : ''}${fileIds.length ? `, файлов ${fileIds.length}` : ''}`);

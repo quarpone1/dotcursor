@@ -153,7 +153,25 @@ try {
     addressedToContact(COMMENTS[2], 971) === true);
   check('без адресатов считается общим',
     addressedToContact({ description: 'x' }, 971) === true);
-  console.log('\n7. Заведение контакта');
+  console.log('\n7. Исполнитель по клинике');
+  await createTask({ name: 'п', description: 'x', contactId: 971, clinic: 'ГП-1' });
+  const gp1 = created[created.length - 1];
+  check('ГП-1 уходит Щербакову',
+    JSON.stringify(gp1.assignees.users) === JSON.stringify([{ id: 'user:63' }]),
+    JSON.stringify(gp1.assignees.users));
+
+  await createTask({ name: 'п', description: 'x', contactId: 971, clinic: 'МедГород' });
+  const mg = created[created.length - 1];
+  check('МедГород уходит Деравчуку',
+    JSON.stringify(mg.assignees.users) === JSON.stringify([{ id: 'user:1' }]),
+    JSON.stringify(mg.assignees.users));
+
+  await createTask({ name: 'п', description: 'x', contactId: 971, clinic: 'Неизвестная' });
+  const unknown = created[created.length - 1];
+  check('незнакомая клиника — вся группа', unknown.assignees.users.length === 4,
+    JSON.stringify(unknown.assignees.users));
+
+  console.log('\n8. Заведение контакта');
   const made = await createContact('Пётр Петров');
   check('контакт создан', made?.id === 991, JSON.stringify(made));
   const cb = createdContacts[0];
