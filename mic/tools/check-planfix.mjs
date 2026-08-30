@@ -8,7 +8,11 @@
 const TOKEN = process.env.PLANFIX_API_TOKEN;
 const ACCOUNT = process.env.PLANFIX_ACCOUNT || 'sensey';
 const BASE = process.env.PLANFIX_API_BASE || `https://${ACCOUNT}.planfix.ru/rest`;
-const create = process.argv.includes('--create');
+const args = process.argv.slice(2);
+const create = args.includes('--create');
+const showContacts = args.includes('--contacts');
+const taskId = args[args.indexOf('--task') + 1] && args.includes('--task')
+  ? args[args.indexOf('--task') + 1] : null;
 
 if (!TOKEN) {
   console.error('✗ PLANFIX_API_TOKEN не задан.');
@@ -71,10 +75,47 @@ if (contacts.ok) {
   step(false, 'Контакты недоступны', `HTTP ${contacts.status} ${contacts.text.slice(0, 200)}`);
 }
 
+/* 2б. Полный список контактов — ищем те, что завёл канал MAX */
+if (showContacts) {
+  const all = await pf('POST', '/contact/list', {
+    offset: 0, pageSize: 100,
+    fields: 'id,name,midname,lastname,email,phones,description,isCompany,group',
+  });
+  if (all.ok) {
+    const list = all.json?.contacts || [];
+    console.log(`\nВсего контактов: ${list.length}`);
+    for (const c of list) {
+      const who = [c.lastname, c.name, c.midname].filter(Boolean).join(' ') || '(без имени)';
+      console.log(`  · ${c.id} — ${who}${c.isCompany ? ' [компания]' : ''}`);
+      if (c.description) console.log(`      описание: ${String(c.description).slice(0, 120)}`);
+    }
+    console.log('\nИщем среди них контакт, заведённый каналом MAX для автора заявки.');
+  } else {
+    step(false, 'Список контактов не отдался', all.text.slice(0, 200));
+  }
+}
+
+/* 2в. Разглядываем существующую задачу — по ней поймём, как привязан контакт */
+if (taskId) {
+  const t = await pf('GET', `/task/${taskId}?fields=id,name,description,counterparty,client,assignees,dataTags`);
+  if (t.ok) {
+    console.log(`\nЗадача ${taskId} целиком:`);
+    console.log(JSON.stringify(t.json, null, 1).slice(0, 3000));
+  } else if (scopeDenied(t)) {
+    step(false, 'Чтение задач закрыто правами токена', t.text.slice(0, 160));
+    console.log('    Добавьте scope task_read — без него не подсмотреть,');
+    console.log('    как канал MAX привязывает задачу к контакту.');
+  } else {
+    step(false, `Задача ${taskId} не прочиталась`, t.text.slice(0, 200));
+  }
+}
+
 /* 3. Создание задачи — только по явному требованию */
 if (!create) {
-  console.log('\nСоздание задачи не проверял. Чтобы проверить (создаст тестовую задачу):');
-  console.log('  npm run planfix:check -- --create');
+  console.log('\nЧто ещё умеет проверка:');
+  console.log('  npm run planfix:check -- --contacts        все контакты (ищем автора из MAX)');
+  console.log('  npm run planfix:check -- --task 16583      разобрать задачу по косточкам');
+  console.log('  npm run planfix:check -- --create          создать тестовую задачу');
 } else {
   const r = await pf('POST', '/task/', {
     name: 'ТЕСТ интеграции — задачу можно закрыть',
