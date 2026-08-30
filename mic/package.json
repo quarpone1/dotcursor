@@ -17,7 +17,8 @@
     "dialog:demo": "node tools/dialog-demo.mjs",
     "bot:test": "node test/bot.test.mjs",
     "bot": "node --env-file-if-exists=.env bot/bot.mjs",
-    "max:webhook": "node --env-file-if-exists=.env tools/max-webhook.mjs"
+    "max:webhook": "node --env-file-if-exists=.env tools/max-webhook.mjs",
+    "planfix:check": "node --env-file-if-exists=.env tools/check-planfix.mjs"
   },
   "dependencies": {
     "nodemailer": "^7.0.9"
