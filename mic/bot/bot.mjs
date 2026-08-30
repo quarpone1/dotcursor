@@ -59,21 +59,32 @@ async function loadState() {
   } catch { /* первого запуска ещё не было */ }
 }
 
-let saveTimer = null;
+async function saveState() {
+  try {
+    await mkdir(STATE_DIR, { recursive: true });
+    await writeFile(STATE_FILE, JSON.stringify(Object.fromEntries(sessions), null, 1), 'utf8');
+  } catch (err) { console.error('Не сохранил состояние диалогов:', err.message); }
+}
+
+// Пишем сразу после каждого события. Отложенная запись с unref() терялась при
+// перезапуске сервиса — диалог обрывался, и ответы человека уходили в Planfix
+// как обычная переписка. Файл крошечный, экономить на этом нечего.
 function saveStateSoon() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    try {
-      await mkdir(STATE_DIR, { recursive: true });
-      await writeFile(STATE_FILE, JSON.stringify(Object.fromEntries(sessions), null, 1), 'utf8');
-    } catch (err) { console.error('Не сохранил состояние диалогов:', err.message); }
-  }, 500).unref?.() ?? null;
+  return saveState();
+}
+
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, async () => {
+    await saveState();
+    process.exit(0);
+  });
 }
 
 /* ---------- пересылка в Planfix ---------- */
 
-async function forwardRaw(update) {
+async function forwardRaw(update, why = 'без причины') {
   if (MODE !== 'webhook') return true;
+  console.log(`→ в Planfix (${why}): ${(update?.message?.body?.text || '').slice(0, 60) || update?.update_type}`);
   try {
     const res = await fetch(PLANFIX_URL, {
       method: 'POST',
@@ -131,7 +142,6 @@ async function deliverTicket(session) {
   if (planfixConfigured) {
     try {
       await createPlanfixTask(session);
-      for (const raw of session.pendingAttachments || []) await forwardRaw(raw);
       return true;
     } catch (err) {
       console.error('Не удалось создать задачу через API, пересылаю в канал:', err.message);
@@ -184,7 +194,10 @@ export async function dispatch(update) {
       !session ||                                   // первое обращение
       (ev.kind === 'callback' && ev.payload === 'new:ticket') ||
       (ev.kind === 'text' && START_RE.test(said));
-    if (!isStart) return void (await forwardRaw(update));
+    if (!isStart) {
+      return void (await forwardRaw(update,
+        session ? 'переписка после заявки' : 'диалога нет'));
+    }
 
     if (ev.kind === 'callback' && ev.callbackId) {
       await api.answerCallback(ev.callbackId).catch(() => {});
@@ -192,7 +205,7 @@ export async function dispatch(update) {
     const fresh = createSession({ id: ev.userId, name: ev.userName });
     fresh.pendingAttachments = [];
     sessions.set(ev.userId, fresh);
-    saveStateSoon();
+    await saveStateSoon();
     await reply(ev, [
       {
         text: 'Здравствуйте! Помогу оформить заявку в техподдержку МИС.\n' +
@@ -257,7 +270,7 @@ export async function dispatch(update) {
   if (result.done || result.cancelled) {
     session.pendingAttachments = [];
   }
-  saveStateSoon();
+  await saveStateSoon();
 }
 
 /* ---------- режимы ---------- */
