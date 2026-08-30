@@ -292,7 +292,7 @@ export function handle(session, input) {
   /* --- текст --- */
   const text = String(input.text || '').trim();
 
-  if (/^\/?(отмена|cancel|стоп)$/i.test(text)) {
+  if (/^\/?(отмена|cancel|стоп|stop)$/i.test(text)) {
     session.phase = 'cancelled';
     replies.push({ text: 'Заявка отменена, ничего никуда не ушло.', buttons: [] });
     return out();

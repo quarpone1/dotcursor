@@ -43,7 +43,7 @@ if (MODE === 'webhook' && !PLANFIX_URL) {
 const api = new MaxApi(TOKEN);
 const sessions = new Map();   // userId -> session
 
-const START_RE = /^\/?(start|начать|заявка|新)$/i;
+const START_RE = /^\/?(start|старт|начать|начало|заявка|help|помощь|\?)$/i;
 
 /* ---------- состояние переживает перезапуск ---------- */
 
@@ -131,18 +131,34 @@ export async function dispatch(update) {
 
   const session = sessions.get(ev.userId);
 
-  // Диалога нет: либо начинаем заявку, либо это переписка по уже созданной задаче —
-  // такие сообщения пропускаем в Planfix как есть, иначе сломается ответ инженеру.
+  // Диалога нет. Два случая:
+  //  · человек пишет впервые — начинаем заявку с любого сообщения, иначе бот
+  //    выглядит сломанным: пишешь ему, а он молчит;
+  //  · заявка уже отправлена — это переписка по задаче, пропускаем в Planfix
+  //    как есть, иначе сломается ответ инженеру.
   if (!session || session.phase === 'done' || session.phase === 'cancelled') {
-    const isStart = ev.kind === 'start' || (ev.kind === 'text' && START_RE.test((ev.text || '').trim()));
+    const said = (ev.text || '').trim();
+    const isStart =
+      ev.kind === 'start' ||
+      !session ||                                   // первое обращение
+      (ev.kind === 'callback' && ev.payload === 'new:ticket') ||
+      (ev.kind === 'text' && START_RE.test(said));
     if (!isStart) return void (await forwardRaw(update));
 
+    if (ev.kind === 'callback' && ev.callbackId) {
+      await api.answerCallback(ev.callbackId).catch(() => {});
+    }
     const fresh = createSession({ id: ev.userId, name: ev.userName });
     fresh.pendingAttachments = [];
     sessions.set(ev.userId, fresh);
     saveStateSoon();
     await reply(ev, [
-      { text: `Здравствуйте! Помогу оформить заявку в техподдержку МИС.\nЗадам ${11} коротких вопроса и отправлю всё разом.`, buttons: [] },
+      {
+        text: 'Здравствуйте! Помогу оформить заявку в техподдержку МИС.\n' +
+              'Задам несколько коротких вопросов и отправлю всё инженеру одним сообщением.\n\n' +
+              'В любой момент можно написать «отмена».',
+        buttons: [],
+      },
       ...start(fresh),
     ]);
     return;
@@ -177,6 +193,12 @@ export async function dispatch(update) {
 
   if (result.done) {
     const ok = await deliverTicket(session, ev);
+    // Кнопка на будущее: после заявки обычные сообщения уходят инженеру,
+    // и человеку нужен явный способ начать новую.
+    await reply(ev, [{
+      text: 'Если понадобится ещё одна заявка — нажмите кнопку или напишите «заявка».',
+      buttons: [[{ text: '📝 Новая заявка', payload: 'new:ticket' }]],
+    }]);
     if (!ok) {
       await reply(ev, [{
         text: 'Заявку собрал, но не смог передать её в поддержку. Сообщите об этом — текст заявки сохранён.',
@@ -254,5 +276,25 @@ function runWebhook() {
   });
 }
 
+/** MAX показывает эти команды в меню бота — «старт» становится видимой кнопкой. */
+async function registerCommands() {
+  const commands = [
+    { name: 'start', description: 'Оформить заявку в техподдержку' },
+    { name: 'cancel', description: 'Отменить текущую заявку' },
+  ];
+  // В документации метод описан по-разному, поэтому пробуем оба адреса.
+  for (const [path, body] of [['/me', { commands }], ['/me/commands', { commands }]]) {
+    try {
+      await api.call('PATCH', path, { body });
+      console.log(`Команды бота зарегистрированы через ${path}: /start, /cancel`);
+      return;
+    } catch (err) {
+      console.error(`PATCH ${path} не прошёл: ${err.message}`);
+    }
+  }
+  console.error('Команды зарегистрировать не удалось — на работу бота это не влияет.');
+}
+
 await loadState();
+await registerCommands();
 if (MODE === 'webhook') runWebhook(); else await runPolling();
