@@ -14,7 +14,10 @@
     "mail:check": "node --env-file-if-exists=.env tools/check-mail.mjs",
     "max:check": "node --env-file-if-exists=.env tools/check-max.mjs",
     "dialog:test": "node test/dialog.test.mjs",
-    "dialog:demo": "node tools/dialog-demo.mjs"
+    "dialog:demo": "node tools/dialog-demo.mjs",
+    "bot:test": "node test/bot.test.mjs",
+    "bot": "node --env-file-if-exists=.env bot/bot.mjs",
+    "max:webhook": "node --env-file-if-exists=.env tools/max-webhook.mjs"
   },
   "dependencies": {
     "nodemailer": "^7.0.9"

@@ -1,0 +1,25 @@
+[Unit]
+Description=Бот заявок МИС в MAX
+After=network.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/var/www/mis-form
+EnvironmentFile=/etc/mis-form.env
+Environment=NODE_ENV=production
+Environment=BOT_MODE=webhook
+Environment=BOT_STATE_DIR=/var/lib/mis-form
+ExecStart=/usr/bin/node bot/bot.mjs
+Restart=always
+RestartSec=5
+
+StateDirectory=mis-form
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mis-form
+
+[Install]
+WantedBy=multi-user.target

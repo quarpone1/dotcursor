@@ -71,6 +71,25 @@ systemctl restart mis-form
 sleep 2
 systemctl is-active --quiet mis-form || { journalctl -u mis-form -n 30 --no-pager; exit 1; }
 
+# --- бот в MAX (если настроен) ---
+if grep -qE '^MAX_BOT_TOKEN=.+' "$ENV_FILE" && grep -qE '^BOT_WEBHOOK_SECRET=.+' "$ENV_FILE"; then
+  say "Ставлю бота MAX"
+  install -m644 "$APP/deploy/mis-bot.service" /etc/systemd/system/mis-bot.service
+  systemctl daemon-reload
+  systemctl enable mis-bot >/dev/null
+  systemctl restart mis-bot
+  sleep 2
+  if systemctl is-active --quiet mis-bot; then
+    echo "   бот слушает вебхук на 127.0.0.1:3211"
+  else
+    journalctl -u mis-bot -n 20 --no-pager
+    echo "‼  Бот не поднялся. Форма при этом работает — разберитесь с ботом отдельно."
+  fi
+else
+  echo
+  echo "· Бот MAX пропущен: в $ENV_FILE нет MAX_BOT_TOKEN и BOT_WEBHOOK_SECRET."
+fi
+
 # --- nginx ---
 say "Настраиваю nginx"
 mkdir -p /etc/nginx/snippets
