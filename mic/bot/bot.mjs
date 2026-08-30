@@ -14,7 +14,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MaxApi, parseUpdate } from './max-api.mjs';
 import { createSession, start, handle, summary } from './dialog.mjs';
-import { createTask, findContact, taskName, planfixConfigured } from './planfix.mjs';
+import { createTask, findContact, taskName, planfixConfigured,
+         uploadFile, newComments, addressedToContact } from './planfix.mjs';
 import { priorityOf } from '../ticket.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -27,6 +28,14 @@ const PORT = Number(process.env.BOT_PORT || 3211);
 const PLANFIX_URL = process.env.PLANFIX_WEBHOOK_URL || '';
 const STATE_DIR = process.env.BOT_STATE_DIR || process.env.LOG_DIR || join(ROOT, '..', 'data');
 const STATE_FILE = join(STATE_DIR, 'bot-sessions.json');
+const TICKETS_FILE = join(STATE_DIR, 'bot-tickets.json');
+// Как часто спрашивать Planfix о новых ответах инженеров
+const RELAY_EVERY_MS = Number(process.env.PLANFIX_RELAY_SECONDS || 60) * 1000;
+// 'addressed' — только адресованные клиенту, 'all' — любые реплики сотрудников.
+// По умолчанию осторожный режим: внутреннее обсуждение клиенту видеть незачем.
+const RELAY_MODE = process.env.PLANFIX_RELAY || 'addressed';
+// Сколько дней следим за задачей после создания
+const RELAY_DAYS = Number(process.env.PLANFIX_RELAY_DAYS || 14);
 // Адрес вебхука публичный, поэтому в путь зашиваем секрет: чужой POST не пройдёт.
 const SECRET = process.env.BOT_WEBHOOK_SECRET || '';
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
@@ -115,17 +124,118 @@ async function resolveContact(session) {
   return found;
 }
 
-/** Заявка становится ОТДЕЛЬНОЙ задачей в Planfix. */
+/** Тянет файл из MAX и кладёт его в Planfix. Возвращает id файла или null. */
+async function transferFile(file) {
+  if (!file?.url) {
+    console.error(`У вложения «${file?.name}» нет ссылки — пропускаю.`);
+    return null;
+  }
+  try {
+    const res = await fetch(file.url, { headers: { Authorization: TOKEN } });
+    if (!res.ok) throw new Error(`MAX отдал ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    const id = await uploadFile(buf, file.name);
+    console.log(`  вложение «${file.name}» (${(buf.length / 1024).toFixed(0)} КБ) → файл Planfix ${id}`);
+    return id;
+  } catch (err) {
+    console.error(`Вложение «${file.name}» не перенеслось: ${err.message}`);
+    return null;
+  }
+}
+
+/** Заявка становится ОТДЕЛЬНОЙ задачей в Planfix, вместе с файлами. */
 async function createPlanfixTask(session) {
   const [priority] = priorityOf(session.answers.urgency);
   const contact = await resolveContact(session);
+
+  const fileIds = [];
+  for (const f of session.files || []) {
+    const id = await transferFile(f);
+    if (id) fileIds.push(id);
+  }
+
   const id = await createTask({
     name: taskName({ ticketNo: session.ticketNo, priority, fields: session.answers }),
     description: summary(session).replace(/\n/g, '<br>'),
     contactId: contact?.id,
+    fileIds,
   });
-  console.log(`${session.ticketNo} → задача Planfix ${id}${contact ? ` (контакт ${contact.id})` : ''}`);
+  console.log(`${session.ticketNo} → задача Planfix ${id}` +
+    `${contact ? `, контакт ${contact.id}` : ''}${fileIds.length ? `, файлов ${fileIds.length}` : ''}`);
+
+  // Ставим задачу на присмотр: ответы инженера отсюда поедут обратно в MAX.
+  if (id) {
+    tickets.push({
+      taskId: id,
+      ticketNo: session.ticketNo,
+      userId: session.user?.id,
+      chatId: session.chatId || null,
+      contactId: contact?.id || null,
+      lastCommentId: 0,
+      createdAt: Date.now(),
+    });
+    await saveTickets();
+  }
   return id;
+}
+
+/* ---------- ответы инженеров обратно в MAX ---------- */
+
+let tickets = [];
+
+async function loadTickets() {
+  try {
+    const raw = JSON.parse(await readFile(TICKETS_FILE, 'utf8'));
+    tickets = raw.filter((t) => Date.now() - t.createdAt < RELAY_DAYS * 864e5);
+    if (tickets.length) console.log(`Под присмотром задач: ${tickets.length}`);
+  } catch { /* ещё не было */ }
+}
+
+async function saveTickets() {
+  try {
+    await mkdir(STATE_DIR, { recursive: true });
+    await writeFile(TICKETS_FILE, JSON.stringify(tickets, null, 1), 'utf8');
+  } catch (err) { console.error('Не сохранил список задач:', err.message); }
+}
+
+async function relayOnce() {
+  if (!planfixConfigured || !tickets.length) return;
+  let changed = false;
+
+  for (const t of tickets) {
+    try {
+      const fresh = await newComments(t.taskId, t.lastCommentId);
+      for (const c of fresh) {
+        t.lastCommentId = Math.max(t.lastCommentId, Number(c.id));
+        changed = true;
+
+        if (RELAY_MODE !== 'all' && !addressedToContact(c, t.contactId)) {
+          console.log(`Комментарий ${c.id} по ${t.ticketNo} не адресован клиенту — не пересылаю.`);
+          continue;
+        }
+        const text = String(c.description || '')
+          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/<[^>]+>/g, '')
+          .replace(/&nbsp;/g, ' ')
+          .trim();
+        if (!text) continue;
+
+        const who = c.owner?.name || 'Техподдержка';
+        await api.send({
+          userId: t.userId, chatId: t.chatId,
+          text: `Ответ по заявке ${t.ticketNo}\n${who}:\n\n${text}`,
+          buttons: [],
+        });
+        console.log(`Ответ по ${t.ticketNo} доставлен в MAX (комментарий ${c.id}).`);
+      }
+    } catch (err) {
+      console.error(`Не удалось забрать комментарии по ${t.ticketNo}: ${err.message}`);
+    }
+  }
+
+  const before = tickets.length;
+  tickets = tickets.filter((t) => Date.now() - t.createdAt < RELAY_DAYS * 864e5);
+  if (changed || tickets.length !== before) await saveTickets();
 }
 
 /** Собранная заявка уходит как одно «сообщение пользователя» — задача создастся целиком. */
@@ -203,6 +313,7 @@ export async function dispatch(update) {
       await api.answerCallback(ev.callbackId).catch(() => {});
     }
     const fresh = createSession({ id: ev.userId, name: ev.userName });
+    fresh.chatId = ev.chatId || null;
     fresh.pendingAttachments = [];
     sessions.set(ev.userId, fresh);
     await saveStateSoon();
@@ -357,5 +468,12 @@ async function registerCommands() {
 }
 
 await loadState();
+await loadTickets();
 await registerCommands();
+
+if (planfixConfigured) {
+  setInterval(() => { relayOnce().catch((e) => console.error('Пересылка ответов:', e.message)); },
+    RELAY_EVERY_MS).unref();
+  console.log(`Ответы инженеров проверяю каждые ${RELAY_EVERY_MS / 1000} с, режим «${RELAY_MODE}».`);
+}
 if (MODE === 'webhook') runWebhook(); else await runPolling();

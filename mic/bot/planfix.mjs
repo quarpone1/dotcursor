@@ -84,7 +84,46 @@ export async function findContact(fullName) {
  * @param {number|null} p.contactId  контакт автора (без него задача будет ничья)
  * @returns {Promise<number>} id созданной задачи
  */
-export async function createTask({ name, description, contactId }) {
+/** Загружает файл в Planfix. Возвращает id, который цепляется к задаче. */
+export async function uploadFile(buffer, filename) {
+  const fd = new FormData();
+  fd.append('file', new Blob([buffer]), filename || 'файл');
+  const res = await fetch(BASE + '/file/', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${TOKEN}`, Accept: 'application/json' },
+    body: fd,
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Planfix upload: ${res.status} ${text.slice(0, 150)}`);
+  return JSON.parse(text).id;
+}
+
+/**
+ * Комментарии задачи новее указанного id.
+ * Возвращает только те, что написал сотрудник: карточка заявки и реплики
+ * самого клиента нам не нужны — их человек и так видел.
+ */
+export async function newComments(taskId, sinceId = 0) {
+  const res = await pf('POST', `/task/${taskId}/comments/list`, {
+    offset: 0, pageSize: 50,
+    fields: 'id,dateTime,type,owner,description,recipients,isDeleted',
+  });
+  const all = res?.comments || [];
+  return all
+    .filter((c) => !c.isDeleted && Number(c.id) > Number(sinceId))
+    .filter((c) => String(c.owner?.id || '').startsWith('user:'))
+    .sort((a, b) => Number(a.id) - Number(b.id));
+}
+
+/** Адресован ли комментарий клиенту — по нему решаем, пересылать ли в MAX. */
+export function addressedToContact(comment, contactId) {
+  if (!contactId) return false;
+  const users = comment?.recipients?.users || [];
+  if (!users.length) return true;            // без адресатов — считаем общим
+  return users.some((u) => String(u.id) === `contact:${contactId}`);
+}
+
+export async function createTask({ name, description, contactId, fileIds = [] }) {
   if (!TOKEN) throw new Error('PLANFIX_API_TOKEN не задан');
 
   const body = {
@@ -94,6 +133,7 @@ export async function createTask({ name, description, contactId }) {
     assignees: { users: ASSIGNEES.map((id) => ({ id })) },
   };
   if (PROJECT_ID) body.project = { id: PROJECT_ID };
+  if (fileIds.length) body.files = fileIds.map((id) => ({ id }));
   if (contactId) {
     const ref = { id: `contact:${contactId}` };
     body.counterparty = ref;   // клиент, по нему Planfix адресует ответ

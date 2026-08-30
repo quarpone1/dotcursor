@@ -23,10 +23,28 @@ const CONTACTS = [
 ];
 
 const created = [];
+const uploaded = [];
+
+// Комментарии как в жизни: карточка от контакта, реплики сотрудников,
+// удалённый и адресованный лично клиенту.
+const COMMENTS = [
+  { id: 100, isDeleted: false, type: 'None', owner: { id: 'contact:971', name: 'Серов' },
+    description: 'Заявка ТП-2026-1 ...' },
+  { id: 101, isDeleted: false, type: 'Comment', owner: { id: 'user:27', name: 'Фиголь Роман' },
+    description: 'Внутреннее: посмотрю логи',
+    recipients: { users: [{ id: 'user:63', name: 'Щербаков' }] } },
+  { id: 102, isDeleted: false, type: 'Comment', owner: { id: 'user:27', name: 'Фиголь Роман' },
+    description: 'Уточните, пожалуйста, номер кассы',
+    recipients: { users: [{ id: 'contact:971', name: 'Серов' }] } },
+  { id: 103, isDeleted: true, type: 'Comment', owner: { id: 'user:27', name: 'Фиголь Роман' },
+    description: 'удалённый' },
+];
 const srv = createServer(async (req, res) => {
   const chunks = [];
   for await (const c of req) chunks.push(c);
-  const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {};
+  const raw = Buffer.concat(chunks);
+  const isJson = /application\/json/.test(req.headers['content-type'] || '');
+  const body = raw.length && isJson ? JSON.parse(raw.toString('utf8')) : {};
   res.writeHead(200, { 'Content-Type': 'application/json' });
 
   if (req.url === '/contact/list') {
@@ -37,11 +55,19 @@ const srv = createServer(async (req, res) => {
     created.push(body);
     return res.end(JSON.stringify({ result: 'success', id: 17000 + created.length }));
   }
+  if (req.url === '/file/') {
+    uploaded.push(req.headers['content-type'] || '');
+    return res.end(JSON.stringify({ result: 'success', id: 969000 + uploaded.length }));
+  }
+  if (req.url === '/task/17001/comments/list') {
+    return res.end(JSON.stringify({ result: 'success', comments: COMMENTS }));
+  }
   res.end('{}');
 }).listen(PORT, '127.0.0.1');
 
 await sleep(100);
-const { findContact, createTask, taskName } = await import('../bot/planfix.mjs');
+const { findContact, createTask, taskName, uploadFile, newComments, addressedToContact } =
+  await import('../bot/planfix.mjs');
 
 try {
   console.log('\n1. Поиск контакта по имени из MAX');
@@ -95,6 +121,33 @@ try {
     fields: { clinic: 'К', module: 'М', title: 'о'.repeat(300) },
   });
   check('длинный заголовок обрезается', long.length <= 250, `${long.length} символов`);
+  console.log('\n5. Файлы');
+  const fileId = await uploadFile(Buffer.from('123'), 'скрин.png');
+  check('файл загружается и возвращает id', fileId === 969001, String(fileId));
+  check('уходит как multipart', /multipart\/form-data/.test(uploaded[0] || ''), uploaded[0]);
+
+  await createTask({ name: 'с файлом', description: 'x', contactId: 971, fileIds: [fileId] });
+  const withFile = created[created.length - 1];
+  check('файл прицеплен к задаче', JSON.stringify(withFile.files) === JSON.stringify([{ id: 969001 }]),
+    JSON.stringify(withFile.files));
+
+  console.log('\n6. Ответы инженеров');
+  const fresh = await newComments(17001, 0);
+  check('карточка заявки не считается ответом', !fresh.some((c) => c.id === 100));
+  check('удалённый комментарий пропущен', !fresh.some((c) => c.id === 103));
+  check('реплики сотрудника взяты', fresh.map((c) => c.id).join(',') === '101,102',
+    fresh.map((c) => c.id).join(','));
+
+  const seenAlready = await newComments(17001, 101);
+  check('уже отправленное второй раз не берётся', seenAlready.map((c) => c.id).join(',') === '102',
+    seenAlready.map((c) => c.id).join(','));
+
+  check('внутренняя переписка клиенту не адресована',
+    addressedToContact(COMMENTS[1], 971) === false);
+  check('комментарий клиенту распознаётся',
+    addressedToContact(COMMENTS[2], 971) === true);
+  check('без адресатов считается общим',
+    addressedToContact({ description: 'x' }, 971) === true);
 } finally {
   srv.close();
 }
