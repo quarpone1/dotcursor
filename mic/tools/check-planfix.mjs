@@ -41,16 +41,19 @@ const step = (ok, msg, extra = '') => {
 
 console.log(`Аккаунт: ${BASE}\n`);
 
-/* 1. Токен */
-const me = await pf('GET', '/user/current');
-if (!me.ok) {
-  step(false, 'Токен не принят', `HTTP ${me.status} ${me.text.slice(0, 200)}`);
-  if (me.status === 401) console.error('\n  401 — токен неверный или отозван.');
-  if (me.status === 403) console.error('\n  403 — токену не хватает прав (scope).');
+const scopeDenied = (r) => r.status === 405 || /scope denied/i.test(r.text);
+
+/* 1. Токен. Пробуем то, на что права точно выданы, а не что попало:
+      «Scope denied» — это уже признак живого токена, просто метод не разрешён. */
+const probe = await pf('GET', '/user/current');
+if (probe.status === 401 || /unknown token/i.test(probe.text)) {
+  step(false, 'Токен не принят', probe.text.slice(0, 200));
+  console.error('\n  Токен неверный или отозван — выпустите заново.');
   process.exit(1);
 }
-const who = me.json?.user || me.json;
-step(true, `Токен работает, пользователь: ${who?.name || who?.id || 'неизвестен'}`);
+step(true, scopeDenied(probe)
+  ? 'Токен принят (чтение пользователя не разрешено — это нормально при узких правах)'
+  : `Токен принят, пользователь: ${probe.json?.user?.name || probe.json?.name || 'неизвестен'}`);
 
 /* 2. Контакты — по ним привяжем заявку к автору */
 const contacts = await pf('POST', '/contact/list', {
@@ -60,10 +63,12 @@ if (contacts.ok) {
   const list = contacts.json?.contacts || [];
   step(true, `Контакты читаются, всего в выборке: ${list.length}`);
   for (const c of list.slice(0, 3)) console.log(`    · ${c.id} — ${c.name || '(без имени)'}`);
+} else if (scopeDenied(contacts)) {
+  step(false, 'Контакты закрыты правами токена', contacts.text.slice(0, 160));
+  console.log('    Добавьте scope contact_readonly — без него задачу не привязать');
+  console.log('    к автору заявки, и ответы инженера не найдут дорогу в MAX.');
 } else {
   step(false, 'Контакты недоступны', `HTTP ${contacts.status} ${contacts.text.slice(0, 200)}`);
-  console.log('    Нужен scope contact_readonly. Без него задачу не привязать к автору,');
-  console.log('    и ответы инженера не найдут дорогу в MAX.');
 }
 
 /* 3. Создание задачи — только по явному требованию */
@@ -78,9 +83,12 @@ if (!create) {
   if (r.ok) {
     step(true, `Задача создаётся, id ${r.json?.id ?? '?'}`);
     console.log('    Проверьте её в Planfix и закройте.');
+  } else if (scopeDenied(r)) {
+    step(false, 'Создание задач закрыто правами токена', r.text.slice(0, 160));
+    console.log('    Добавьте scope task_add.');
   } else {
     step(false, 'Задача не создалась', `HTTP ${r.status} ${r.text.slice(0, 300)}`);
-    console.log('    Чаще всего не хватает scope task_add или обязательного поля.');
+    console.log('    Скорее всего не хватает обязательного поля — покажите этот вывод.');
   }
 }
 
