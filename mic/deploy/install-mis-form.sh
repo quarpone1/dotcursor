@@ -23,7 +23,14 @@ rsync -a --delete \
 chown -R deploy:deploy "$APP"
 
 say "Ставлю зависимости"
-sudo -u deploy bash -lc "cd $APP && npm ci --omit=dev"
+# Не login-оболочка и явный запрет на интерактив: профиль deploy, пейджеры и
+# вопросы npm здесь не нужны — шаг должен либо пройти, либо упасть с текстом.
+if ! sudo -u deploy env CI=1 PAGER=cat GIT_PAGER=cat NPM_CONFIG_FUND=false NPM_CONFIG_AUDIT=false \
+     bash -c "cd '$APP' && timeout 300 npm ci --omit=dev --no-fund --no-audit --loglevel=error < /dev/null"; then
+  echo "‼  npm ci не завершился (таймаут 5 минут или ошибка)."
+  echo "   Проверьте доступ к registry.npmjs.org: curl -sI https://registry.npmjs.org | head -1"
+  exit 1
+fi
 
 # --- настройки ---
 if [ ! -f "$ENV_FILE" ]; then
@@ -58,8 +65,8 @@ fi
 say "Проверяю связь с Яндекс.Диском и почтой"
 # --env-file, а не сорсинг шеллом: так значения читаются буквально,
 # как их потом прочитает systemd, и пароль не поедет от лишних символов.
-sudo -u deploy bash -lc "cd $APP && node --env-file=$ENV_FILE tools/check-disk.mjs"
-sudo -u deploy bash -lc "cd $APP && node --env-file=$ENV_FILE tools/check-mail.mjs"
+sudo -u deploy env PAGER=cat bash -c "cd '$APP' && node --env-file=$ENV_FILE tools/check-disk.mjs < /dev/null"
+sudo -u deploy env PAGER=cat bash -c "cd '$APP' && node --env-file=$ENV_FILE tools/check-mail.mjs < /dev/null"
 
 # --- сервис ---
 say "Ставлю systemd-сервис"
