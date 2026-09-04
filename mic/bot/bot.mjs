@@ -15,7 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { MaxApi, parseUpdate } from './max-api.mjs';
 import { createSession, start, handle, summary } from './dialog.mjs';
 import { createTask, findContact, taskName, planfixConfigured,
-         uploadFile, newComments, addressedToContact, createContact } from './planfix.mjs';
+         uploadFile, newComments, addressedToContact, createContact,
+         addComment, isOwnComment, FROM_MAX_MARK } from './planfix.mjs';
 import { priorityOf } from '../ticket.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -34,8 +35,11 @@ const RELAY_EVERY_MS = Number(process.env.PLANFIX_RELAY_SECONDS || 60) * 1000;
 // 'addressed' — только адресованные клиенту, 'all' — любые реплики сотрудников.
 // По умолчанию осторожный режим: внутреннее обсуждение клиенту видеть незачем.
 const RELAY_MODE = process.env.PLANFIX_RELAY || 'addressed';
-// Сколько дней следим за задачей после создания
+// Сколько дней после последней активности опрашиваем задачу на ответы инженера
 const RELAY_DAYS = Number(process.env.PLANFIX_RELAY_DAYS || 14);
+// Сколько дней задача остаётся в «Моих заявках» и принимает ответы человека
+const TICKETS_KEEP_DAYS = Number(process.env.TICKETS_KEEP_DAYS || 180);
+const REPLIES_FILE = join(STATE_DIR, 'bot-replies.json');
 // Адрес вебхука публичный, поэтому в путь зашиваем секрет: чужой POST не пройдёт.
 const SECRET = process.env.BOT_WEBHOOK_SECRET || '';
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
@@ -54,7 +58,8 @@ if (MODE === 'webhook' && !PLANFIX_URL) {
 const api = new MaxApi(TOKEN);
 const sessions = new Map();   // userId -> session
 
-const START_RE = /^\/?(start|старт|начать|начало|заявка|help|помощь|\?)$/i;
+const START_RE = /^\/?(start|старт|начать|начало|заявка|новая заявка|help|помощь|\?)$/i;
+const LIST_RE = /^\/?(tickets|мои заявки|заявки|мои)$/i;
 
 /* ---------- состояние переживает перезапуск ---------- */
 
@@ -180,11 +185,13 @@ async function createPlanfixTask(session) {
     tickets.push({
       taskId: id,
       ticketNo: session.ticketNo,
+      title: String(session.answers.title || '').slice(0, 40),
       userId: session.user?.id,
       chatId: session.chatId || null,
       contactId: contact?.id || null,
       lastCommentId: 0,
       createdAt: Date.now(),
+      lastActivity: Date.now(),
     });
     await saveTickets();
   }
@@ -195,11 +202,14 @@ async function createPlanfixTask(session) {
 
 let tickets = [];
 
+const keepTicket = (t) => Date.now() - (t.createdAt || 0) < TICKETS_KEEP_DAYS * 864e5;
+const isLive = (t) => Date.now() - (t.lastActivity || t.createdAt || 0) < RELAY_DAYS * 864e5;
+
 async function loadTickets() {
   try {
     const raw = JSON.parse(await readFile(TICKETS_FILE, 'utf8'));
-    tickets = raw.filter((t) => Date.now() - t.createdAt < RELAY_DAYS * 864e5);
-    if (tickets.length) console.log(`Под присмотром задач: ${tickets.length}`);
+    tickets = raw.filter(keepTicket);
+    if (tickets.length) console.log(`Задач в памяти: ${tickets.length}, под присмотром: ${tickets.filter(isLive).length}`);
   } catch { /* ещё не было */ }
 }
 
@@ -214,12 +224,15 @@ async function relayOnce() {
   if (!planfixConfigured || !tickets.length) return;
   let changed = false;
 
-  for (const t of tickets) {
+  for (const t of tickets.filter(isLive)) {
     try {
       const fresh = await newComments(t.taskId, t.lastCommentId);
       for (const c of fresh) {
         t.lastCommentId = Math.max(t.lastCommentId, Number(c.id));
         changed = true;
+
+        // Наш собственный комментарий (ответ человека из MAX) — не эхо
+        if (isOwnComment(c)) continue;
 
         if (RELAY_MODE !== 'all' && !addressedToContact(c, t.contactId)) {
           console.log(`Комментарий ${c.id} по ${t.ticketNo} не адресован клиенту — не пересылаю.`);
@@ -236,8 +249,9 @@ async function relayOnce() {
         await api.send({
           userId: t.userId, chatId: t.chatId,
           text: `Ответ по заявке ${t.ticketNo}\n${who}:\n\n${text}`,
-          buttons: [],
+          buttons: [[{ text: '💬 Ответить', payload: `reply:${t.taskId}` }]],
         });
+        t.lastActivity = Date.now();
         console.log(`Ответ по ${t.ticketNo} доставлен в MAX (комментарий ${c.id}).`);
       }
     } catch (err) {
@@ -246,8 +260,105 @@ async function relayOnce() {
   }
 
   const before = tickets.length;
-  tickets = tickets.filter((t) => Date.now() - t.createdAt < RELAY_DAYS * 864e5);
+  tickets = tickets.filter(keepTicket);
   if (changed || tickets.length !== before) await saveTickets();
+}
+
+/* ---------- ответы человека по своим заявкам ---------- */
+
+// userId → {taskId, ticketNo}. Пока режим включён, всё, что пишет человек,
+// уходит комментарием в эту задачу — до «Готово» или выбора другой заявки.
+let replies = new Map();
+
+async function loadReplies() {
+  try {
+    replies = new Map(Object.entries(JSON.parse(await readFile(REPLIES_FILE, 'utf8')))
+      .map(([k, v]) => [Number(k), v]));
+  } catch { /* ещё не было */ }
+}
+async function saveReplies() {
+  try {
+    await mkdir(STATE_DIR, { recursive: true });
+    await writeFile(REPLIES_FILE, JSON.stringify(Object.fromEntries(replies), null, 1), 'utf8');
+  } catch (err) { console.error('Не сохранил режимы ответа:', err.message); }
+}
+
+const MENU = [[{ text: '📝 Новая заявка', payload: 'new:ticket' }, { text: '📋 Мои заявки', payload: 'my:tickets' }]];
+const REPLY_BTNS = (taskId) => [[{ text: '✓ Готово', payload: 'reply:exit' }, { text: '📋 Другая заявка', payload: 'my:tickets' }]];
+
+function myTickets(userId) {
+  return tickets.filter((t) => t.userId === userId).sort((a, b) => b.createdAt - a.createdAt).slice(0, 10);
+}
+
+function ticketsMenu(userId) {
+  const mine = myTickets(userId);
+  if (!mine.length) {
+    return { text: 'У вас пока нет отправленных заявок.', buttons: [[{ text: '📝 Новая заявка', payload: 'new:ticket' }]] };
+  }
+  const rows = mine.map((t) => [{
+    text: `${t.ticketNo}${t.title ? ' · ' + t.title : ''}`.slice(0, 40),
+    payload: `pick:${t.taskId}`,
+  }]);
+  rows.push([{ text: '📝 Новая заявка', payload: 'new:ticket' }]);
+  return { text: 'Ваши заявки — выберите, по какой хотите написать:', buttons: rows };
+}
+
+async function enterReply(ev, taskId) {
+  const t = tickets.find((x) => x.taskId === Number(taskId) && x.userId === ev.userId);
+  if (!t) {
+    await reply(ev, [{ text: 'Эта заявка не найдена среди ваших.', buttons: MENU }]);
+    return;
+  }
+  replies.set(ev.userId, { taskId: t.taskId, ticketNo: t.ticketNo, since: Date.now() });
+  await saveReplies();
+  await reply(ev, [{
+    text: `Пишу в заявку ${t.ticketNo}${t.title ? ' · ' + t.title : ''}.\n` +
+          'Отправьте текст или файл — он уйдёт инженеру в эту задачу.\n' +
+          'Когда закончите, нажмите «Готово».',
+    buttons: REPLY_BTNS(t.taskId),
+  }]);
+}
+
+async function exitReply(ev) {
+  replies.delete(ev.userId);
+  await saveReplies();
+  await reply(ev, [{ text: 'Хорошо. Что дальше?', buttons: MENU }]);
+}
+
+/** Текст или файл человека → комментарий в его задаче. */
+async function postReply(ev, mode) {
+  const t = tickets.find((x) => x.taskId === mode.taskId);
+  if (!t) { await exitReply(ev); return; }
+
+  const fileIds = [];
+  for (const f of ev.attachments || []) {
+    const id = await transferFile(f);
+    if (id) fileIds.push(id);
+  }
+  const said = (ev.text || '').trim();
+  const body = said || (fileIds.length ? `прислал файл${fileIds.length > 1 ? 'ы' : ''}` : '');
+  if (!body) {
+    await reply(ev, [{ text: 'Не увидел ни текста, ни файла.', buttons: REPLY_BTNS(t.taskId) }]);
+    return;
+  }
+
+  try {
+    await addComment(t.taskId, `${FROM_MAX_MARK} от ${ev.userName || 'пользователя'}:\n${body}`,
+      { contactId: t.contactId, fileIds });
+    t.lastActivity = Date.now();
+    await saveTickets();
+    console.log(`${t.ticketNo} ← ответ человека (${fileIds.length} файл.)`);
+    await reply(ev, [{
+      text: `Отправлено в заявку ${t.ticketNo}. Можно написать ещё или нажать «Готово».`,
+      buttons: REPLY_BTNS(t.taskId),
+    }]);
+  } catch (err) {
+    console.error(`Не удалось добавить комментарий в ${t.ticketNo}: ${err.message}`);
+    await reply(ev, [{
+      text: 'Не получилось передать сообщение в заявку. Попробуйте ещё раз чуть позже.',
+      buttons: REPLY_BTNS(t.taskId),
+    }]);
+  }
 }
 
 /** Собранная заявка уходит как одно «сообщение пользователя» — задача создастся целиком. */
@@ -311,19 +422,38 @@ export async function dispatch(update) {
   //    как есть, иначе сломается ответ инженеру.
   if (!session || session.phase === 'done' || session.phase === 'cancelled') {
     const said = (ev.text || '').trim();
-    const isStart =
-      ev.kind === 'start' ||
-      !session ||                                   // первое обращение
-      (ev.kind === 'callback' && ev.payload === 'new:ticket') ||
-      (ev.kind === 'text' && START_RE.test(said));
-    if (!isStart) {
-      return void (await forwardRaw(update,
-        session ? 'переписка после заявки' : 'диалога нет'));
-    }
-
+    const payload = ev.kind === 'callback' ? String(ev.payload || '') : '';
     if (ev.kind === 'callback' && ev.callbackId) {
       await api.answerCallback(ev.callbackId).catch(() => {});
     }
+
+    // Кнопки управления вне диалога
+    if (payload === 'my:tickets' || (ev.kind === 'text' && LIST_RE.test(said))) {
+      return void (await reply(ev, [ticketsMenu(ev.userId)]));
+    }
+    if (payload.startsWith('pick:') || payload.startsWith('reply:')) {
+      const arg = payload.split(':')[1];
+      return void (arg === 'exit' ? await exitReply(ev) : await enterReply(ev, arg));
+    }
+
+    const isStart =
+      ev.kind === 'start' ||
+      !session ||                                   // первое обращение
+      payload === 'new:ticket' ||
+      (ev.kind === 'text' && START_RE.test(said));
+
+    if (!isStart) {
+      // Человек в режиме ответа по заявке — его слова уходят в ту задачу
+      const mode = replies.get(ev.userId);
+      if (mode && (ev.kind === 'text' || ev.kind === 'attachment')) {
+        return void (await postReply(ev, mode));
+      }
+      // Иначе просто подсказываем, что можно сделать
+      return void (await reply(ev, [{ text: 'Что сделать?', buttons: MENU }]));
+    }
+
+    replies.delete(ev.userId);   // новая заявка закрывает режим ответа
+    await saveReplies();
     const fresh = createSession({ id: ev.userId, name: ev.userName });
     fresh.chatId = ev.chatId || null;
     fresh.pendingAttachments = [];
@@ -338,6 +468,13 @@ export async function dispatch(update) {
       },
       ...start(fresh),
     ]);
+    return;
+  }
+
+  // Кнопка из старого сообщения («Ответить», «Мои заявки») посреди опроса
+  if (ev.kind === 'callback' && /^(reply|pick|my):/.test(String(ev.payload || ''))) {
+    await api.answerCallback(ev.callbackId).catch(() => {});
+    await reply(ev, [{ text: 'Сначала закончите или отмените текущую заявку.', buttons: [] }]);
     return;
   }
 
@@ -364,9 +501,9 @@ export async function dispatch(update) {
     result = handle(session, input);
   } catch (err) {
     // Логика упала — не теряем сообщение пользователя, отдаём его Planfix как раньше.
-    console.error('Сбой диалога, пропускаю событие в Planfix:', err.message);
+    console.error('Сбой диалога:', err.message);
     sessions.delete(ev.userId);
-    await forwardRaw(update);
+    await reply(ev, [{ text: 'Что-то пошло не так, заявку придётся начать заново.', buttons: MENU }]);
     return;
   }
 
@@ -380,8 +517,8 @@ export async function dispatch(update) {
     // Кнопка на будущее: после заявки обычные сообщения уходят инженеру,
     // и человеку нужен явный способ начать новую.
     await reply(ev, [{
-      text: 'Если понадобится ещё одна заявка — нажмите кнопку или напишите «заявка».',
-      buttons: [[{ text: '📝 Новая заявка', payload: 'new:ticket' }]],
+      text: 'Ответы инженера придут сюда. Дописать что-то к заявке можно через «Мои заявки».',
+      buttons: MENU,
     }]);
     if (!ok) {
       await reply(ev, [{
@@ -464,6 +601,7 @@ function runWebhook() {
 async function registerCommands() {
   const commands = [
     { name: 'start', description: 'Оформить заявку в техподдержку' },
+    { name: 'tickets', description: 'Мои заявки — дописать или ответить' },
     { name: 'cancel', description: 'Отменить текущую заявку' },
   ];
   // В документации метод описан по-разному, поэтому пробуем оба адреса.
@@ -481,6 +619,7 @@ async function registerCommands() {
 
 await loadState();
 await loadTickets();
+await loadReplies();
 await registerCommands();
 
 if (planfixConfigured) {

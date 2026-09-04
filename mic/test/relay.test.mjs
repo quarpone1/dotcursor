@@ -21,6 +21,7 @@ const check = (name, cond, extra = '') => {
 const sentToUser = [];
 let taskCreated = null;
 let comments = [];          // что «написали» инженеры в задаче
+const posted = [];          // комментарии, которые бот отправил в задачу
 
 const body = async (req) => {
   const chunks = [];
@@ -48,6 +49,7 @@ const pfSrv = createServer(async (req, res) => {
   }
   if (req.url === '/task/') { taskCreated = b; return res.end(JSON.stringify({ id: 18001 })); }
   if (req.url === '/task/18001/comments/list') return res.end(JSON.stringify({ comments }));
+  if (req.url === '/task/18001/comments/') { posted.push(b); return res.end(JSON.stringify({ id: 900 + posted.length })); }
   res.end('{"result":"success"}');
 }).listen(PF_PORT, '127.0.0.1');
 
@@ -103,6 +105,7 @@ const btn = (payload) => ({
   },
 });
 const lastText = () => sentToUser[sentToUser.length - 1]?.text || '';
+const lastButtons = () => JSON.stringify(sentToUser[sentToUser.length - 1]?.attachments || []);
 
 try {
   console.log('\n1. Заявка целиком');
@@ -156,11 +159,46 @@ try {
   check('указан автор', /Фиголь Роман/.test(relayed), relayed.slice(0, 60));
   check('разметка убрана', !/<br>/.test(relayed), relayed);
 
+  check('под ответом инженера есть кнопка «Ответить»', /reply:18001/.test(lastButtons()), lastButtons().slice(0, 80));
+
   console.log('\n4. Повтор не дублируется');
   const count = sentToUser.length;
   await sleep(1600);
   check('тот же комментарий второй раз не отправлен', sentToUser.length === count,
     `было ${count}, стало ${sentToUser.length}`);
+
+  console.log('\n5. Человек отвечает по кнопке');
+  await post(btn('reply:18001'));
+  check('режим ответа включён', /Пишу в заявку ТП-/.test(lastText()), lastText().slice(0, 40));
+  await post(msg('Касса номер 3, у окна'));
+  check('текст ушёл комментарием в задачу', posted.length === 1 && /Касса номер 3/.test(posted[0].description),
+    JSON.stringify(posted[0]).slice(0, 120));
+  check('комментарий помечен как из MAX', /Из MAX/.test(posted[0].description));
+  check('владелец — контакт человека', posted[0].owner?.id === 'contact:971', JSON.stringify(posted[0].owner));
+  check('человеку подтвердили отправку', /Отправлено в заявку/.test(lastText()), lastText().slice(0, 40));
+
+  console.log('\n6. Свой комментарий не возвращается эхом');
+  comments = [...comments, {
+    id: 502, isDeleted: false, type: 'Comment',
+    owner: { id: 'user:99', name: 'API' },
+    description: '💬 Из MAX от Дмитрий Серов:<br>Касса номер 3, у окна',
+    recipients: { users: [{ id: 'contact:971', name: 'Серов' }] },
+  }];
+  const cnt = sentToUser.length;
+  await sleep(1600);
+  check('эха нет', sentToUser.length === cnt, `было ${cnt}, стало ${sentToUser.length}`);
+
+  console.log('\n7. Мои заявки, выход и посторонний текст');
+  await post(btn('reply:exit'));
+  check('вышли из режима ответа', /Что дальше/.test(lastText()), lastText());
+  await post(msg('просто текст'));
+  check('вне режима текст не уходит в задачу', posted.length === 1, String(posted.length));
+  check('и показано меню', /Что сделать/.test(lastText()) && /my:tickets/.test(lastButtons()));
+  await post(btn('my:tickets'));
+  check('список заявок показан', /Ваши заявки/.test(lastText()) && /pick:18001/.test(lastButtons()), lastButtons().slice(0, 100));
+  await post(btn('pick:18001'));
+  await post(msg('Ещё уточнение'));
+  check('через список тоже можно писать', posted.length === 2 && /Ещё уточнение/.test(posted[1].description));
 } finally {
   bot.kill();
   maxSrv.close();
@@ -169,5 +207,5 @@ try {
   await rm(STATE_DIR, { recursive: true, force: true });
 }
 
-console.log(failed ? `\nПРОВАЛЕНО: ${failed}` : '\nОбратный канал работает');
+console.log(failed ? `\nПРОВАЛЕНО: ${failed}` : '\nОбратный канал работает в обе стороны');
 process.exit(failed ? 1 : 0);

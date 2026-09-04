@@ -155,13 +155,13 @@ try {
   check('всего в Planfix две передачи: заявка и файл', forwarded.length === 2,
     `их ${forwarded.length}`);
 
-  console.log('\n5. Переписка после заявки');
+  console.log('\n5. Сообщение вне диалога');
   const before = forwarded.length;
   await post(msg('А когда починят?'));
-  check('обычное сообщение проходит в Planfix насквозь', forwarded.length === before + 1,
-    `было ${before}, стало ${forwarded.length}`);
-  check('оно ушло как есть, без обёртки',
-    forwarded[forwarded.length - 1]?.message?.body?.text === 'А когда починят?');
+  check('в Planfix оно не уходит', forwarded.length === before, `было ${before}, стало ${forwarded.length}`);
+  check('человеку показано меню', /Что сделать/.test(lastText()) &&
+    JSON.stringify(sentToUser[sentToUser.length - 1]?.attachments || []).includes('my:tickets'),
+    lastText().slice(0, 40));
 
   console.log('\n6. Вторая заявка тем же пользователем');
   const before2 = forwarded.length;

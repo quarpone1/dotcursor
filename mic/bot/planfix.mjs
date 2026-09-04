@@ -151,6 +151,37 @@ export async function newComments(taskId, sinceId = 0) {
     .sort((a, b) => Number(a.id) - Number(b.id));
 }
 
+// Метка наших же комментариев: по ней они не уедут обратно человеку как «ответ инженера».
+export const FROM_MAX_MARK = '💬 Из MAX';
+
+/** Наш ли это комментарий (написан ботом от имени человека из MAX). */
+export function isOwnComment(comment) {
+  return String(comment?.description || '').replace(/<[^>]+>/g, '').trim().startsWith(FROM_MAX_MARK);
+}
+
+/**
+ * Комментарий в задачу от имени человека из MAX.
+ * Владельцем пытаемся поставить его контакт; если Planfix не даст —
+ * автором будет пользователь токена, а кто писал, видно по метке в тексте.
+ */
+export async function addComment(taskId, text, { contactId = null, fileIds = [] } = {}) {
+  const body = { description: String(text).replace(/\n/g, '<br>') };
+  if (fileIds.length) body.files = fileIds.map((id) => ({ id }));
+  if (contactId) body.owner = { id: `contact:${contactId}` };
+  try {
+    const res = await pf('POST', `/task/${taskId}/comments/`, body);
+    return res?.id ?? true;
+  } catch (err) {
+    // Planfix мог отвергнуть владельца-контакта — повторяем без него
+    if (contactId && err.status === 400) {
+      delete body.owner;
+      const res = await pf('POST', `/task/${taskId}/comments/`, body);
+      return res?.id ?? true;
+    }
+    throw err;
+  }
+}
+
 /** Адресован ли комментарий клиенту — по нему решаем, пересылать ли в MAX. */
 export function addressedToContact(comment, contactId) {
   if (!contactId) return false;
