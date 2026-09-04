@@ -107,8 +107,10 @@ const lastText = () => sentToUser[sentToUser.length - 1]?.text || '';
 try {
   console.log('\n1. Заявка целиком');
   await post(msg('заявка'));
+  await post(btn('c:kind:0'));
   await post(btn('c:clinic:0'));
   await post(btn('c:module:0'));
+  await post(btn('c:role:0'));
   await post(msg('Иванов А. А. / логин 123'));
   await post(btn('skip'));
   await post(msg('Не печатается чек'));

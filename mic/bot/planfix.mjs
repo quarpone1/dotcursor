@@ -183,5 +183,6 @@ export async function createTask({ name, description, contactId, fileIds = [], c
 /** Заголовок задачи: номер, приоритет и суть — чтобы список читался с одного взгляда. */
 export function taskName({ ticketNo, priority, fields }) {
   const short = String(fields.title || '').replace(/\s+/g, ' ').slice(0, 90);
-  return `[${ticketNo}] ${priority} · ${fields.clinic} / ${fields.module} — ${short}`;
+  const kind = fields.kind === 'Доработка' ? 'Доработка · ' : '';
+  return `[${ticketNo}] ${kind}${priority} · ${fields.clinic} / ${fields.module} — ${short}`;
 }

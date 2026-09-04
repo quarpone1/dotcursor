@@ -106,12 +106,14 @@ const lastText = () => sentToUser[sentToUser.length - 1]?.text || '';
 try {
   console.log('\n1. Старт диалога');
   await post(msg('заявка'));
-  check('бот поздоровался и задал первый вопрос', /клиник/i.test(lastText()), lastText().slice(0, 60));
+  check('бот поздоровался и задал первый вопрос', /Что оформляем/i.test(lastText()), lastText().slice(0, 60));
   check('в Planfix пока ничего не ушло', forwarded.length === 0, String(forwarded.length));
 
   console.log('\n2. Проходим опрос');
+  await post(btn('c:kind:0'));
   await post(btn('c:clinic:0'));
   await post(btn('c:module:0'));
+  await post(btn('c:role:0'));
   await post(msg('Иванов А. А. / логин 123'));
   await post(btn('skip'));
   await post(msg('Не печатается чек на кассе'));
@@ -164,7 +166,7 @@ try {
   console.log('\n6. Вторая заявка тем же пользователем');
   const before2 = forwarded.length;
   await post(msg('заявка'));
-  check('новый диалог начался', /клиник/i.test(lastText()));
+  check('новый диалог начался', /Что оформляем/i.test(lastText()));
   check('и снова ничего не утекает', forwarded.length === before2, String(forwarded.length - before2));
 } finally {
   bot.kill();
