@@ -16,7 +16,7 @@ import { MaxApi, parseUpdate } from './max-api.mjs';
 import { createSession, start, handle, summary } from './dialog.mjs';
 import { createTask, findContact, taskName, planfixConfigured,
          uploadFile, newComments, addressedToContact, createContact,
-         addComment, isOwnComment, FROM_MAX_MARK } from './planfix.mjs';
+         addComment, isOwnComment, FROM_MAX_MARK, downloadFile } from './planfix.mjs';
 import { priorityOf } from '../ticket.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -243,16 +243,36 @@ async function relayOnce() {
           .replace(/<[^>]+>/g, '')
           .replace(/&nbsp;/g, ' ')
           .trim();
-        if (!text) continue;
 
         const who = c.owner?.name || 'Техподдержка';
+        const files = c.files || [];
+        const header = `Ответ по заявке ${t.ticketNo}\n${who}:`;
+        const body = text || (files.length ? '(файлы во вложении)' : '');
+        if (!body) continue;
         await api.send({
           userId: t.userId, chatId: t.chatId,
-          text: `Ответ по заявке ${t.ticketNo}\n${who}:\n\n${text}`,
+          text: `${header}\n\n${body}`,
           buttons: [[{ text: '💬 Ответить', payload: `reply:${t.taskId}` }]],
         });
         t.lastActivity = Date.now();
         console.log(`Ответ по ${t.ticketNo} доставлен в MAX (комментарий ${c.id}).`);
+
+        // Вложения инженера — следом, отдельным сообщением: Planfix → MAX
+        for (const f of files) {
+          try {
+            const buf = await downloadFile(f.id);
+            const att = await api.upload(buf, f.name);
+            await api.send({ userId: t.userId, chatId: t.chatId, text: `📎 ${f.name}`, attachments: [att] });
+            console.log(`  файл «${f.name}» (${(buf.length / 1024).toFixed(0)} КБ) → MAX`);
+          } catch (err) {
+            console.error(`  файл «${f.name}» из комментария ${c.id} не доставлен: ${err.message}`);
+            await api.send({
+              userId: t.userId, chatId: t.chatId,
+              text: `📎 К ответу приложен файл «${f.name}», но передать его не удалось — он есть в задаче.`,
+              buttons: [],
+            }).catch(() => {});
+          }
+        }
       }
     } catch (err) {
       console.error(`Не удалось забрать комментарии по ${t.ticketNo}: ${err.message}`);

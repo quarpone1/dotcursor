@@ -32,17 +32,30 @@ const body = async (req) => {
   try { return JSON.parse(raw.toString('utf8')); } catch { return {}; }
 };
 
+const maxUploads = [];       // что бот загрузил в MAX
 const maxSrv = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const b = await body(req);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   if (url.pathname === '/messages') { sentToUser.push(b); return res.end('{"message":{}}'); }
+  if (url.pathname === '/uploads') {
+    return res.end(JSON.stringify({ url: `http://127.0.0.1:${MAX_PORT}/upload.do?type=${url.searchParams.get('type')}` }));
+  }
+  if (url.pathname === '/upload.do') {
+    maxUploads.push({ type: url.searchParams.get('type'), bytes: b.raw?.length || 0 });
+    return res.end(url.searchParams.get('type') === 'image'
+      ? JSON.stringify({ photos: { k: { token: 'IMG-TOKEN' } } })
+      : JSON.stringify({ fileId: 1, token: 'FILE-TOKEN' }));
+  }
   if (url.pathname === '/subscriptions') return res.end('{"subscriptions":[]}');
   res.end('{"result":"ok"}');
 }).listen(MAX_PORT, '127.0.0.1');
 
 const pfSrv = createServer(async (req, res) => {
   const b = await body(req);
+  // бинарные ответы — до общего JSON-заголовка
+  if (req.url === '/file/555/download') { res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(Buffer.alloc(2048, 7)); }
+  if (req.url === '/file/556/download') { res.writeHead(200, { 'Content-Type': 'application/octet-stream' }); return res.end(Buffer.from('лог')); }
   res.writeHead(200, { 'Content-Type': 'application/json' });
   if (req.url === '/contact/list') {
     return res.end(JSON.stringify({ contacts: [{ id: 971, name: 'Дмитрий', lastname: 'Серов', isCompany: false }] }));
@@ -160,6 +173,41 @@ try {
   check('разметка убрана', !/<br>/.test(relayed), relayed);
 
   check('под ответом инженера есть кнопка «Ответить»', /reply:18001/.test(lastButtons()), lastButtons().slice(0, 80));
+
+  console.log('\n3б. Инженер прикладывает файлы');
+  comments = [...comments, {
+    id: 503, isDeleted: false, type: 'Comment',
+    owner: { id: 'user:27', name: 'Фиголь Роман' },
+    description: 'Вот скрин и лог',
+    recipients: { users: [{ id: 'contact:971', name: 'Серов' }] },
+    files: [{ id: 555, name: 'скрин.png', size: 2048 }, { id: 556, name: 'kassa.log', size: 3 }],
+  }];
+  const beforeFiles = sentToUser.length;
+  await sleep(1800);
+  const after = sentToUser.slice(beforeFiles);
+  check('файлы скачаны из Planfix и загружены в MAX', maxUploads.length === 2,
+    JSON.stringify(maxUploads));
+  check('картинка ушла как image, лог как file',
+    maxUploads.map((u) => u.type).join(',') === 'image,file', maxUploads.map((u) => u.type).join(','));
+  const withImg = after.find((m) => JSON.stringify(m.attachments || []).includes('IMG-TOKEN'));
+  const withFile = after.find((m) => JSON.stringify(m.attachments || []).includes('FILE-TOKEN'));
+  check('картинка доставлена человеку вложением', Boolean(withImg) && /скрин\.png/.test(withImg.text), JSON.stringify(after.map((m) => m.text)));
+  check('лог доставлен человеку вложением', Boolean(withFile) && /kassa\.log/.test(withFile.text));
+  check('текст ответа пришёл отдельно и раньше файлов', /Вот скрин и лог/.test(after[0]?.text || ''), after[0]?.text);
+
+  console.log('\n3в. Комментарий из одного файла, без текста');
+  comments = [...comments, {
+    id: 504, isDeleted: false, type: 'Comment',
+    owner: { id: 'user:27', name: 'Фиголь Роман' },
+    description: '',
+    recipients: { users: [{ id: 'contact:971', name: 'Серов' }] },
+    files: [{ id: 556, name: 'kassa.log', size: 3 }],
+  }];
+  const beforeOnly = sentToUser.length;
+  await sleep(1800);
+  const onlyFile = sentToUser.slice(beforeOnly);
+  check('файл без текста тоже доставлен', onlyFile.length === 2 && /файлы во вложении/.test(onlyFile[0].text),
+    JSON.stringify(onlyFile.map((m) => m.text)));
 
   console.log('\n4. Повтор не дублируется');
   const count = sentToUser.length;

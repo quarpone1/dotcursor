@@ -50,12 +50,36 @@ export class MaxApi {
     return buttons.length ? [{ type: 'inline_keyboard', payload: { buttons } }] : [];
   }
 
-  /** Сообщение пользователю или в чат. */
-  send({ userId, chatId, text, buttons }) {
+  /** Сообщение пользователю или в чат. `attachments` — готовые вложения (файлы, картинки). */
+  send({ userId, chatId, text, buttons, attachments = [] }) {
     return this.call('POST', '/messages', {
       params: { user_id: userId, chat_id: chatId },
-      body: { text, attachments: MaxApi.keyboard(buttons) },
+      body: { text, attachments: [...attachments, ...MaxApi.keyboard(buttons)] },
     });
+  }
+
+  /**
+   * Загружает файл в MAX и возвращает вложение для send().
+   * Картинки идут как image (MAX покажет превью), остальное — как file.
+   * Проверено живым токеном: POST /uploads → url, multipart «data» → token.
+   */
+  async upload(buffer, filename) {
+    const isImage = /\.(png|jpe?g|gif|webp|bmp)$/i.test(filename || '');
+    const type = isImage ? 'image' : 'file';
+    const { url } = await this.call('POST', '/uploads', { params: { type } });
+    const fd = new FormData();
+    fd.append('data', new Blob([buffer]), filename || 'файл');
+    const res = await fetch(url, { method: 'POST', body: fd });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`MAX upload ${type}: ${res.status} ${text.slice(0, 150)}`);
+    const j = JSON.parse(text);
+    if (type === 'image') {
+      const first = Object.values(j.photos || {})[0];
+      if (!first?.token) throw new Error('MAX upload image: нет токена в ответе');
+      return { type: 'image', payload: { token: first.token } };
+    }
+    if (!j.token) throw new Error('MAX upload file: нет токена в ответе');
+    return { type: 'file', payload: { token: j.token } };
   }
 
   /** Ответ на нажатие кнопки: гасит «часики» и может подменить сообщение. */

@@ -39,6 +39,8 @@ const COMMENTS = [
     recipients: { users: [{ id: 'contact:971', name: 'Серов' }] } },
   { id: 103, isDeleted: true, type: 'Comment', owner: { id: 'user:27', name: 'Фиголь Роман' },
     description: 'удалённый' },
+  { id: 104, isDeleted: false, type: 'Comment', owner: { id: 'user:27', name: 'Фиголь Роман' },
+    description: 'скрин', files: [{ id: 555, name: 'скрин.png', size: 10 }] },
 ];
 const srv = createServer(async (req, res) => {
   const chunks = [];
@@ -46,6 +48,11 @@ const srv = createServer(async (req, res) => {
   const raw = Buffer.concat(chunks);
   const isJson = /application\/json/.test(req.headers['content-type'] || '');
   const body = raw.length && isJson ? JSON.parse(raw.toString('utf8')) : {};
+  // бинарный ответ — до общего JSON-заголовка
+  if (req.url === '/file/555/download') {
+    res.writeHead(200, { 'Content-Type': 'image/png' });
+    return res.end(Buffer.from('PNGDATA'));
+  }
   res.writeHead(200, { 'Content-Type': 'application/json' });
 
   if (req.url === '/contact/list') {
@@ -67,12 +74,15 @@ const srv = createServer(async (req, res) => {
   if (req.url === '/task/17001/comments/list') {
     return res.end(JSON.stringify({ result: 'success', comments: COMMENTS }));
   }
+  if (req.url === '/file/777/download') {
+    return res.end(JSON.stringify({ url: `http://127.0.0.1:${PORT}/file/555/download` }));
+  }
   res.end('{}');
 }).listen(PORT, '127.0.0.1');
 
 await sleep(100);
 const { findContact, createTask, taskName, uploadFile, newComments, addressedToContact,
-  createContact } = await import('../bot/planfix.mjs');
+  createContact, downloadFile } = await import('../bot/planfix.mjs');
 
 try {
   console.log('\n1. Поиск контакта по имени из MAX');
@@ -102,7 +112,7 @@ try {
   check('автор — тот же контакт', body.assigner?.id === 'contact:971', JSON.stringify(body.assigner));
   check('исполнители проставлены', (body.assignees?.users || []).length === 4,
     JSON.stringify(body.assignees));
-  check('шаблон как у задач канала', body.template?.id === 1, JSON.stringify(body.template));
+  check('шаблон «Заявка на Сопровождение МИЦ»', body.template?.id === 16657, JSON.stringify(body.template));
   check('задача кладётся в заданный проект', body.project?.id === 4242, JSON.stringify(body.project));
 
   console.log('\n3. Задача без контакта');
@@ -140,11 +150,17 @@ try {
   const fresh = await newComments(17001, 0);
   check('карточка заявки не считается ответом', !fresh.some((c) => c.id === 100));
   check('удалённый комментарий пропущен', !fresh.some((c) => c.id === 103));
-  check('реплики сотрудника взяты', fresh.map((c) => c.id).join(',') === '101,102',
+  check('реплики сотрудника взяты', fresh.map((c) => c.id).join(',') === '101,102,104',
     fresh.map((c) => c.id).join(','));
+  check('файлы комментария доезжают до бота', fresh.find((c) => c.id === 104)?.files?.[0]?.name === 'скрин.png');
 
-  const seenAlready = await newComments(17001, 101);
-  check('уже отправленное второй раз не берётся', seenAlready.map((c) => c.id).join(',') === '102',
+  const bin = await downloadFile(555);
+  check('файл скачивается как бинарник', bin.toString() === 'PNGDATA', bin.toString().slice(0, 20));
+  const viaJson = await downloadFile(777);
+  check('если Planfix отдал ссылку — идём по ней', viaJson.toString() === 'PNGDATA', viaJson.toString().slice(0, 20));
+
+  const seenAlready = await newComments(17001, 102);
+  check('уже отправленное второй раз не берётся', seenAlready.map((c) => c.id).join(',') === '104',
     seenAlready.map((c) => c.id).join(','));
 
   check('внутренняя переписка клиенту не адресована',

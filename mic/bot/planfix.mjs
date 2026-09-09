@@ -13,7 +13,8 @@ import { CLINIC_ENGINEER } from '../ticket.mjs';
 const TOKEN = process.env.PLANFIX_API_TOKEN;
 const ACCOUNT = process.env.PLANFIX_ACCOUNT || 'sensey';
 const BASE = process.env.PLANFIX_API_BASE || `https://${ACCOUNT}.planfix.ru/rest`;
-const TEMPLATE_ID = Number(process.env.PLANFIX_TEMPLATE_ID || 1);
+// Шаблон «Заявка на Сопровождение МИЦ» — заведён разработчиком под проект 16521.
+const TEMPLATE_ID = Number(process.env.PLANFIX_TEMPLATE_ID || 16657);
 // Проект, в который складываются заявки из MAX. Пусто — задача ляжет без проекта.
 const PROJECT_ID = Number(process.env.PLANFIX_PROJECT_ID || 0);
 // Шаблон контакта — такой же, как у контактов, заведённых каналом MAX
@@ -120,6 +121,28 @@ export async function createContact(fullName) {
   return id ? { id, name, lastname: rest.join(' ') } : null;
 }
 
+/**
+ * Скачивает файл Planfix по id. Нужно право file_readonly.
+ * Planfix может отдать и сам бинарник, и JSON со ссылкой — принимаем оба варианта.
+ */
+export async function downloadFile(fileId) {
+  const res = await fetch(`${BASE}/file/${fileId}/download`, {
+    headers: { Authorization: `Bearer ${TOKEN}` },
+    redirect: 'follow',
+  });
+  if (!res.ok) throw new Error(`Planfix download ${fileId}: ${res.status} ${(await res.text()).slice(0, 150)}`);
+  const ct = res.headers.get('content-type') || '';
+  if (/application\/json/.test(ct)) {
+    const j = await res.json();
+    const url = j?.url || j?.downloadUrl || j?.file?.url;
+    if (!url) throw new Error(`Planfix download ${fileId}: JSON без ссылки`);
+    const r2 = await fetch(url, { headers: { Authorization: `Bearer ${TOKEN}` } });
+    if (!r2.ok) throw new Error(`Planfix download ${fileId}: ссылка отдала ${r2.status}`);
+    return Buffer.from(await r2.arrayBuffer());
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
 /** Загружает файл в Planfix. Возвращает id, который цепляется к задаче. */
 export async function uploadFile(buffer, filename) {
   const fd = new FormData();
@@ -142,7 +165,7 @@ export async function uploadFile(buffer, filename) {
 export async function newComments(taskId, sinceId = 0) {
   const res = await pf('POST', `/task/${taskId}/comments/list`, {
     offset: 0, pageSize: 50,
-    fields: 'id,dateTime,type,owner,description,recipients,isDeleted',
+    fields: 'id,dateTime,type,owner,description,recipients,isDeleted,files',
   });
   const all = res?.comments || [];
   return all
