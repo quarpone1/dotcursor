@@ -286,20 +286,33 @@ export async function createTask({ name, description, contactId, fileIds = [], c
     body.assigner = ref;       // автор заявки — тот же человек
   }
 
-  try {
-    const res = await pf('POST', '/task/', body);
-    return res?.id ?? null;
-  } catch (err) {
-    // Поле не принялось (не добавлено в шаблон, не тот тип) — задача важнее полей:
-    // создаём без них и громко пишем в лог, чтобы починили сопоставление.
-    if (body.customFieldData && err.status === 400) {
-      console.error(`Planfix отверг поля задачи (${err.message.slice(0, 120)}) — создаю без них.`);
-      delete body.customFieldData;
+  // Поле может не приняться (не добавлено в шаблон, не тот тип, нет такого
+  // варианта в списке). Задача важнее полей: отбрасываем только отвергнутое
+  // и пробуем снова, пока Planfix не примет. В лог — каждое выброшенное.
+  for (let attempt = 0; attempt < 12; attempt++) {
+    try {
       const res = await pf('POST', '/task/', body);
       return res?.id ?? null;
+    } catch (err) {
+      if (!body.customFieldData?.length || err.status !== 400) throw err;
+      const m = /by id - (\d+)/.exec(err.message);
+      const badId = m ? Number(m[1]) : null;
+      const bad = body.customFieldData.find((x) => x.field.id === badId);
+      if (bad) {
+        console.error(`Planfix отверг поле ${badId} («${fieldNameById(badId)}» = ${JSON.stringify(bad.value)}) — создаю без него.`);
+        body.customFieldData = body.customFieldData.filter((x) => x.field.id !== badId);
+      } else {
+        console.error(`Planfix отверг поля задачи (${err.message.slice(0, 140)}) — создаю без всех.`);
+        delete body.customFieldData;
+      }
+      if (!body.customFieldData?.length) delete body.customFieldData;
     }
-    throw err;
   }
+  throw new Error('Planfix: задача не создалась после нескольких попыток');
+}
+
+function fieldNameById(id) {
+  return Object.values(fieldMap || {}).find((f) => f.id === id)?.name || '?';
 }
 
 /** Заголовок задачи: номер, приоритет и суть — чтобы список читался с одного взгляда. */
