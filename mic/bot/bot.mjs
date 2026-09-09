@@ -16,7 +16,7 @@ import { MaxApi, parseUpdate } from './max-api.mjs';
 import { createSession, start, handle, summary } from './dialog.mjs';
 import { createTask, findContact, taskName, planfixConfigured,
          uploadFile, newComments, addressedToContact, createContact,
-         addComment, isOwnComment, FROM_MAX_MARK, downloadFile } from './planfix.mjs';
+         addComment, isOwnComment, FROM_MAX_MARK, downloadFile, loadFields } from './planfix.mjs';
 import { priorityOf } from '../ticket.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -176,6 +176,7 @@ async function createPlanfixTask(session) {
     contactId: contact?.id,
     fileIds,
     clinic: session.answers.clinic,
+    fields: { ...session.answers, ticketNo: session.ticketNo, source: 'бот MAX' },
   });
   console.log(`${session.ticketNo} → задача Planfix ${id}` +
     `${contact ? `, контакт ${contact.id}` : ''}${fileIds.length ? `, файлов ${fileIds.length}` : ''}`);
@@ -640,6 +641,7 @@ async function registerCommands() {
 await loadState();
 await loadTickets();
 await loadReplies();
+if (planfixConfigured) await loadFields();
 await registerCommands();
 
 if (planfixConfigured) {

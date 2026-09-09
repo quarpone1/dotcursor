@@ -25,6 +25,7 @@ const CONTACTS = [
 const created = [];
 const uploaded = [];
 const createdContacts = [];
+let rejectFields = false;   // имитация «Custom field not permitted»
 
 // Комментарии как в жизни: карточка от контакта, реплики сотрудников,
 // удалённый и адресованный лично клиенту.
@@ -48,6 +49,11 @@ const srv = createServer(async (req, res) => {
   const raw = Buffer.concat(chunks);
   const isJson = /application\/json/.test(req.headers['content-type'] || '');
   const body = raw.length && isJson ? JSON.parse(raw.toString('utf8')) : {};
+  // ответы с не-200 статусом — до общего JSON-заголовка
+  if (req.url === '/task/' && rejectFields && body.customFieldData) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ result: 'fail', code: 6, error: 'Custom field not permitted by id - 1' }));
+  }
   // бинарный ответ — до общего JSON-заголовка
   if (req.url === '/file/555/download') {
     res.writeHead(200, { 'Content-Type': 'image/png' });
@@ -62,6 +68,16 @@ const srv = createServer(async (req, res) => {
   if (req.url === '/task/') {
     created.push(body);
     return res.end(JSON.stringify({ result: 'success', id: 17000 + created.length }));
+  }
+  if (req.url.startsWith('/customfield/task')) {
+    return res.end(JSON.stringify({ result: 'success', customfields: [
+      { id: 501, name: 'Клиника', type: 0 },
+      { id: 502, name: 'Тип заявки', type: 20 },
+      { id: 503, name: 'Модуль МИС', type: 20 },
+      { id: 504, name: 'Срочность', type: 20 },
+      { id: 505, name: 'Номер заявки', type: 0 },
+      { id: 999, name: 'Сумма сделки', type: 1 },
+    ] }));
   }
   if (req.url === '/contact/') {
     createdContacts.push(body);
@@ -82,7 +98,7 @@ const srv = createServer(async (req, res) => {
 
 await sleep(100);
 const { findContact, createTask, taskName, uploadFile, newComments, addressedToContact,
-  createContact, downloadFile } = await import('../bot/planfix.mjs');
+  createContact, downloadFile, loadFields, customFieldData } = await import('../bot/planfix.mjs');
 
 try {
   console.log('\n1. Поиск контакта по имени из MAX');
@@ -187,7 +203,33 @@ try {
   check('незнакомая клиника — вся группа', unknown.assignees.users.length === 4,
     JSON.stringify(unknown.assignees.users));
 
-  console.log('\n8. Заведение контакта');
+  console.log('\n8. Поля шаблона');
+  const map = await loadFields();
+  check('поля найдены по именам', map.clinic?.id === 501 && map.kind?.id === 502 && map.module?.id === 503,
+    JSON.stringify(map));
+  check('чужое поле не подхвачено', !Object.values(map).some((f) => f.id === 999));
+  check('отсутствующие поля просто не сопоставлены', !map.role && !map.patient);
+
+  const cfd = customFieldData({ clinic: 'МедГород', kind: 'Ошибка', module: 'ЭМК', urgency: 'Мешает, есть обходной путь',
+    ticketNo: 'ТП-2026-1', role: 'Врач', patient: '' });
+  check('значения собраны только для существующих полей', cfd.length === 5, JSON.stringify(cfd));
+  check('формат: field.id + value', cfd.find((x) => x.field.id === 501)?.value === 'МедГород', JSON.stringify(cfd[0]));
+  check('пустой пациент не передаётся', !cfd.some((x) => x.value === ''));
+
+  await createTask({ name: 'с полями', description: 'x', contactId: 971, clinic: 'МедГород',
+    fields: { clinic: 'МедГород', kind: 'Ошибка', module: 'ЭМК', urgency: 'Незначительно / пожелание', ticketNo: 'ТП-2026-2' } });
+  const withFields = created[created.length - 1];
+  check('поля ушли в создание задачи', (withFields.customFieldData || []).length === 5, JSON.stringify(withFields.customFieldData));
+
+  rejectFields = true;
+  const beforeReject = created.length;
+  const fid = await createTask({ name: 'поля отвергнуты', description: 'x', contactId: 971, clinic: 'ГП-1',
+    fields: { clinic: 'ГП-1', kind: 'Ошибка' } });
+  check('при отказе Planfix задача всё равно создана', fid !== null && created.length === beforeReject + 1);
+  check('и создана уже без полей', !created[created.length - 1].customFieldData);
+  rejectFields = false;
+
+  console.log('\n9. Заведение контакта');
   const made = await createContact('Пётр Петров');
   check('контакт создан', made?.id === 991, JSON.stringify(made));
   const cb = createdContacts[0];

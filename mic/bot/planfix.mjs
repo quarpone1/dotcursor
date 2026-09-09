@@ -40,6 +40,60 @@ export function assigneesFor(clinic) {
 
 export const planfixConfigured = Boolean(TOKEN);
 
+/* ---------- пользовательские поля шаблона ----------
+   Поля заводятся в Planfix руками (API не даёт), а бот находит их по имени.
+   Слева — ключ из ответов заявки, справа — как поле может называться. */
+export const FIELD_NAMES = {
+  ticketNo: ['Номер заявки', '№ заявки'],
+  kind:     ['Тип заявки', 'Тип'],
+  clinic:   ['Клиника', 'Объект'],
+  module:   ['Модуль МИС', 'Модуль'],
+  role:     ['Роль'],
+  urgency:  ['Срочность'],
+  patient:  ['Пациент', 'Пациент (карта / КБП)'],
+  contact:  ['Контакт заявителя', 'Контакт'],
+  source:   ['Источник'],
+};
+
+let fieldMap = null;   // key → {id, name, type}
+
+const normName = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9]/g, '');
+
+/** Читает поля задач и сопоставляет с нашими ключами. Вызывается один раз при старте. */
+export async function loadFields() {
+  fieldMap = {};
+  if (!TOKEN) return fieldMap;
+  let list = [];
+  try {
+    const res = await pf('GET', '/customfield/task?fields=id,name,type,directory');
+    list = res?.customfields || [];
+  } catch (err) {
+    console.error('Поля задач не прочитались (нужно право common_metadata):', err.message);
+    return fieldMap;
+  }
+  for (const [key, names] of Object.entries(FIELD_NAMES)) {
+    const wanted = names.map(normName);
+    const hit = list.find((f) => wanted.includes(normName(f.name)));
+    if (hit) fieldMap[key] = { id: hit.id, name: hit.name, type: hit.type };
+  }
+  const found = Object.entries(fieldMap).map(([k, f]) => `${k}→«${f.name}»`).join(', ');
+  const missing = Object.keys(FIELD_NAMES).filter((k) => !fieldMap[k]);
+  console.log(`Поля шаблона: ${found || 'ни одного'}${missing.length ? `; не нашлись: ${missing.join(', ')}` : ''}`);
+  return fieldMap;
+}
+
+/** customFieldData для создания задачи по значениям заявки. Пустые пропускаем. */
+export function customFieldData(values) {
+  if (!fieldMap) return [];
+  const out = [];
+  for (const [key, f] of Object.entries(fieldMap)) {
+    const v = values[key];
+    if (v === undefined || v === null || String(v).trim() === '') continue;
+    out.push({ field: { id: f.id }, value: String(v).slice(0, 1000) });
+  }
+  return out;
+}
+
 async function pf(method, path, body) {
   const res = await fetch(BASE + path, {
     method,
@@ -213,7 +267,7 @@ export function addressedToContact(comment, contactId) {
   return users.some((u) => String(u.id) === `contact:${contactId}`);
 }
 
-export async function createTask({ name, description, contactId, fileIds = [], clinic = null }) {
+export async function createTask({ name, description, contactId, fileIds = [], clinic = null, fields = null }) {
   if (!TOKEN) throw new Error('PLANFIX_API_TOKEN не задан');
 
   const body = {
@@ -222,6 +276,8 @@ export async function createTask({ name, description, contactId, fileIds = [], c
     template: { id: TEMPLATE_ID },
     assignees: { users: assigneesFor(clinic).map((id) => ({ id })) },
   };
+  const cfd = fields ? customFieldData(fields) : [];
+  if (cfd.length) body.customFieldData = cfd;
   if (PROJECT_ID) body.project = { id: PROJECT_ID };
   if (fileIds.length) body.files = fileIds.map((id) => ({ id }));
   if (contactId) {
@@ -230,8 +286,20 @@ export async function createTask({ name, description, contactId, fileIds = [], c
     body.assigner = ref;       // автор заявки — тот же человек
   }
 
-  const res = await pf('POST', '/task/', body);
-  return res?.id ?? null;
+  try {
+    const res = await pf('POST', '/task/', body);
+    return res?.id ?? null;
+  } catch (err) {
+    // Поле не принялось (не добавлено в шаблон, не тот тип) — задача важнее полей:
+    // создаём без них и громко пишем в лог, чтобы починили сопоставление.
+    if (body.customFieldData && err.status === 400) {
+      console.error(`Planfix отверг поля задачи (${err.message.slice(0, 120)}) — создаю без них.`);
+      delete body.customFieldData;
+      const res = await pf('POST', '/task/', body);
+      return res?.id ?? null;
+    }
+    throw err;
+  }
 }
 
 /** Заголовок задачи: номер, приоритет и суть — чтобы список читался с одного взгляда. */
