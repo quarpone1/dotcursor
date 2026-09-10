@@ -34,7 +34,7 @@ const TICKETS_FILE = join(STATE_DIR, 'bot-tickets.json');
 // Как часто спрашивать Planfix о новых ответах инженеров. Реже 30 с нельзя:
 // у Planfix суточный лимит API, и частый опрос выжигает его к вечеру.
 const RELAY_MIN_S = Number(process.env.PLANFIX_RELAY_MIN_SECONDS || 30);
-const RELAY_EVERY_MS = Math.max(RELAY_MIN_S, Number(process.env.PLANFIX_RELAY_SECONDS || 120)) * 1000;
+const RELAY_EVERY_MS = Math.max(RELAY_MIN_S, Number(process.env.PLANFIX_RELAY_SECONDS || 60)) * 1000;
 // Сколько задач опрашивать за один тик — остальные подождут следующего круга.
 // 5 задач раз в минуту = 300 запросов в час, это укладывается в любой тариф.
 const RELAY_BATCH = Number(process.env.PLANFIX_RELAY_BATCH || 5);
