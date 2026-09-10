@@ -16,7 +16,8 @@ import { MaxApi, parseUpdate } from './max-api.mjs';
 import { createSession, start, handle, summary } from './dialog.mjs';
 import { createTask, findContact, taskName, planfixConfigured,
          uploadFile, newComments, addressedToContact, createContact,
-         addComment, isOwnComment, FROM_MAX_MARK, downloadFile, loadFields } from './planfix.mjs';
+         addComment, isOwnComment, FROM_MAX_MARK, downloadFile, loadFields,
+         rateLimitSeconds, fieldsLoaded } from './planfix.mjs';
 import { priorityOf } from '../ticket.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -30,8 +31,14 @@ const PLANFIX_URL = process.env.PLANFIX_WEBHOOK_URL || '';
 const STATE_DIR = process.env.BOT_STATE_DIR || process.env.LOG_DIR || join(ROOT, '..', 'data');
 const STATE_FILE = join(STATE_DIR, 'bot-sessions.json');
 const TICKETS_FILE = join(STATE_DIR, 'bot-tickets.json');
-// Как часто спрашивать Planfix о новых ответах инженеров
-const RELAY_EVERY_MS = Number(process.env.PLANFIX_RELAY_SECONDS || 60) * 1000;
+// Как часто спрашивать Planfix о новых ответах инженеров. Реже 30 с нельзя:
+// у Planfix суточный лимит API, и частый опрос выжигает его к вечеру.
+const RELAY_MIN_S = Number(process.env.PLANFIX_RELAY_MIN_SECONDS || 30);
+const RELAY_EVERY_MS = Math.max(RELAY_MIN_S, Number(process.env.PLANFIX_RELAY_SECONDS || 120)) * 1000;
+// Сколько задач опрашивать за один тик — остальные подождут следующего круга.
+// 5 задач раз в минуту = 300 запросов в час, это укладывается в любой тариф.
+const RELAY_BATCH = Number(process.env.PLANFIX_RELAY_BATCH || 5);
+const QUEUE_FILE = join(STATE_DIR, 'bot-queue.json');
 // 'addressed' — только адресованные клиенту, 'all' — любые реплики сотрудников.
 // По умолчанию осторожный режим: внутреннее обсуждение клиенту видеть незачем.
 const RELAY_MODE = process.env.PLANFIX_RELAY || 'addressed';
@@ -221,11 +228,63 @@ async function saveTickets() {
   } catch (err) { console.error('Не сохранил список задач:', err.message); }
 }
 
+/* Лимит API исчерпан — не долбим, ждём сброса. Заявки на это время — в очередь. */
+let pausedUntil = 0;
+let relayBusy = false;
+let relayCursor = 0;
+
+function pauseFor(err) {
+  const sec = err?.rateLimit || rateLimitSeconds(err);
+  if (!sec) return false;
+  const until = Date.now() + Math.min(sec, 24 * 3600) * 1000;
+  if (until > pausedUntil) {
+    pausedUntil = until;
+    console.error(`‼ Лимит API Planfix исчерпан — пауза до ${new Date(until).toLocaleString('ru-RU')}. ` +
+      'Ответы инженеров и новые задачи подождут сброса; заявки копятся в очереди.');
+  }
+  return true;
+}
+const apiPaused = () => Date.now() < pausedUntil;
+
 async function relayOnce() {
-  if (!planfixConfigured || !tickets.length) return;
+  if (!planfixConfigured || relayBusy || apiPaused()) return;
+  relayBusy = true;
+  try {
+    if (!fieldsLoaded()) await loadFields().catch(() => {});   // не прочитались при старте
+    await flushQueue();
+    await relayTick();
+  } finally {
+    relayBusy = false;
+  }
+}
+
+async function relayTick() {
+  if (!tickets.length) return;
   let changed = false;
 
-  for (const t of tickets.filter(isLive)) {
+  // По кругу, порциями: каждая живая задача опрашивается раз в N тиков
+  const live = tickets.filter(isLive);
+  if (!live.length) return;
+  const batch = [];
+  for (let i = 0; i < Math.min(RELAY_BATCH, live.length); i++) {
+    batch.push(live[(relayCursor + i) % live.length]);
+  }
+  relayCursor = (relayCursor + batch.length) % live.length;
+
+  for (const t of batch) {
+    if (apiPaused()) break;
+    if (await relayTicket(t)) changed = true;
+  }
+
+  const before = tickets.length;
+  tickets = tickets.filter(keepTicket);
+  if (changed || tickets.length !== before) await saveTickets();
+}
+
+/** Забирает новые комментарии одной задачи и доставляет их человеку. true — что-то изменилось. */
+async function relayTicket(t) {
+  let changed = false;
+  {
     try {
       const fresh = await newComments(t.taskId, t.lastCommentId);
       for (const c of fresh) {
@@ -276,13 +335,90 @@ async function relayOnce() {
         }
       }
     } catch (err) {
-      console.error(`Не удалось забрать комментарии по ${t.ticketNo}: ${err.message}`);
+      if (!pauseFor(err)) console.error(`Не удалось забрать комментарии по ${t.ticketNo}: ${err.message}`);
     }
   }
+  return changed;
+}
 
-  const before = tickets.length;
-  tickets = tickets.filter(keepTicket);
-  if (changed || tickets.length !== before) await saveTickets();
+/**
+ * Сигнал от Planfix: «в задаче N новый комментарий». Приходит из автоматического
+ * сценария Planfix на адрес вебхука с суффиксом /planfix. Достаём номер задачи
+ * откуда угодно — из JSON, формы или строки запроса — и опрашиваем её сразу.
+ */
+async function onPlanfixHook(rawBody, url) {
+  const text = rawBody.toString('utf8');
+  let taskId = Number(url.searchParams.get('task') || url.searchParams.get('taskId') || 0);
+  if (!taskId) {
+    try {
+      const j = JSON.parse(text);
+      taskId = Number(j.task ?? j.taskId ?? j.id ?? j.task_id ?? j?.task?.id ?? 0);
+    } catch {
+      const m = /(?:task|taskId|id)=(\d+)/.exec(text) || /\b(\d{4,})\b/.exec(text);
+      taskId = m ? Number(m[1]) : 0;
+    }
+  }
+  if (!taskId) { console.error('Сигнал Planfix без номера задачи:', text.slice(0, 120)); return; }
+  const t = tickets.find((x) => x.taskId === taskId);
+  if (!t) { console.log(`Сигнал Planfix по задаче ${taskId} — не наша, пропускаю`); return; }
+  if (apiPaused()) { console.log(`Сигнал Planfix по ${t.ticketNo}, но API на паузе — заберу после сброса`); return; }
+  console.log(`Сигнал Planfix по ${t.ticketNo} — забираю комментарии`);
+  if (await relayTicket(t)) await saveTickets();
+}
+
+/* ---------- очередь заявок на время недоступности Planfix ---------- */
+
+let queue = [];
+
+async function loadQueue() {
+  try { queue = JSON.parse(await readFile(QUEUE_FILE, 'utf8')); } catch { /* пусто */ }
+  if (queue.length) console.log(`В очереди на отправку в Planfix: ${queue.length}`);
+}
+async function saveQueue() {
+  try {
+    await mkdir(STATE_DIR, { recursive: true });
+    await writeFile(QUEUE_FILE, JSON.stringify(queue, null, 1), 'utf8');
+  } catch (err) { console.error('Не сохранил очередь:', err.message); }
+}
+
+/** Заявка ждёт, пока Planfix снова отвечает. Снимок сессии — всё, что нужно для создания. */
+async function enqueue(session) {
+  queue.push({
+    ticketNo: session.ticketNo, answers: session.answers, files: session.files || [],
+    user: session.user, chatId: session.chatId || null, queuedAt: Date.now(), tries: 0,
+  });
+  await saveQueue();
+  console.log(`${session.ticketNo} → в очередь (Planfix недоступен), в очереди ${queue.length}`);
+}
+
+async function flushQueue() {
+  while (queue.length && !apiPaused()) {
+    const item = queue[0];
+    try {
+      const id = await createPlanfixTask(item);
+      queue.shift();
+      await saveQueue();
+      if (id) {
+        await api.send({
+          userId: item.user?.id, chatId: item.chatId,
+          text: `Заявка ${item.ticketNo} передана в поддержку — связь с системой задач восстановилась.`,
+          buttons: [],
+        }).catch(() => {});
+      }
+    } catch (err) {
+      if (pauseFor(err)) return;
+      item.tries++;
+      if (item.tries >= 5) {
+        console.error(`${item.ticketNo}: не удалось создать задачу после 5 попыток — снимаю с очереди: ${err.message}`);
+        queue.shift();
+        await saveQueue();
+        continue;
+      }
+      // не лимит, а что-то ещё — попробуем на следующем тике
+      console.error(`${item.ticketNo}: очередь, попытка ${item.tries}: ${err.message}`);
+      return;
+    }
+  }
 }
 
 /* ---------- ответы человека по своим заявкам ---------- */
@@ -394,10 +530,12 @@ async function deliverTicket(session) {
   // Основной путь: отдельная задача через API. Прежняя пересылка в канал
   // остаётся страховкой — если API недоступен, заявка всё равно дойдёт.
   if (planfixConfigured) {
+    if (apiPaused()) { await enqueue(session); return 'queued'; }
     try {
       await createPlanfixTask(session);
       return true;
     } catch (err) {
+      if (pauseFor(err)) { await enqueue(session); return 'queued'; }
       console.error('Не удалось создать задачу через API, пересылаю в канал:', err.message);
     }
   }
@@ -535,6 +673,12 @@ export async function dispatch(update) {
 
   if (result.done) {
     const ok = await deliverTicket(session);
+    if (ok === 'queued') {
+      await reply(ev, [{
+        text: 'Заявка принята и сохранена. Система задач сейчас недоступна — передам, как только она ответит, и сообщу здесь.',
+        buttons: [],
+      }]);
+    }
     // Кнопка на будущее: после заявки обычные сообщения уходят инженеру,
     // и человеку нужен явный способ начать новую.
     await reply(ev, [{
@@ -601,9 +745,15 @@ function runWebhook() {
       if (size > 2 * 1024 * 1024) { res.writeHead(413).end(); return; }
       chunks.push(c);
     }
-    // MAX ждёт быстрый 200: подтверждаем сразу, работаем после.
+    // MAX и Planfix ждут быстрый 200: подтверждаем сразу, работаем после.
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end('{"ok":true}');
+
+    const reqUrl = new URL(req.url, 'http://localhost');
+    if (/\/planfix\/?$/.test(reqUrl.pathname)) {
+      onPlanfixHook(Buffer.concat(chunks), reqUrl).catch((e) => console.error('Сигнал Planfix:', e.message));
+      return;
+    }
 
     let update;
     try { update = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
@@ -641,12 +791,14 @@ async function registerCommands() {
 await loadState();
 await loadTickets();
 await loadReplies();
+await loadQueue();
 if (planfixConfigured) await loadFields();
 await registerCommands();
 
 if (planfixConfigured) {
   setInterval(() => { relayOnce().catch((e) => console.error('Пересылка ответов:', e.message)); },
     RELAY_EVERY_MS).unref();
-  console.log(`Ответы инженеров проверяю каждые ${RELAY_EVERY_MS / 1000} с, режим «${RELAY_MODE}».`);
+  console.log(`Ответы инженеров: опрос каждые ${RELAY_EVERY_MS / 1000} с по ${RELAY_BATCH} задач, режим «${RELAY_MODE}». ` +
+    'Мгновенно — по сигналу Planfix на …/planfix.');
 }
 if (MODE === 'webhook') runWebhook(); else await runPolling();

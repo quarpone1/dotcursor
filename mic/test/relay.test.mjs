@@ -21,6 +21,8 @@ const check = (name, cond, extra = '') => {
 const sentToUser = [];
 let taskCreated = null;
 let comments = [];          // что «написали» инженеры в задаче
+let rateLimited = false;    // имитация исчерпанного суточного лимита Planfix
+let tasksCreated = 0;
 const posted = [];          // комментарии, которые бот отправил в задачу
 
 const body = async (req) => {
@@ -53,6 +55,11 @@ const maxSrv = createServer(async (req, res) => {
 
 const pfSrv = createServer(async (req, res) => {
   const b = await body(req);
+  // Лимит Planfix отдаёт с кодом 200 и result:fail — ровно так, как в жизни
+  if (rateLimited && !req.url.startsWith('/file/')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ result: 'fail', code: 1, error: 'Rest API billing - rate limit exceeded, remaining:0, timeToReset:2' }));
+  }
   // бинарные ответы — до общего JSON-заголовка
   if (req.url === '/file/555/download') { res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(Buffer.alloc(2048, 7)); }
   if (req.url === '/file/556/download') { res.writeHead(200, { 'Content-Type': 'application/octet-stream' }); return res.end(Buffer.from('лог')); }
@@ -60,8 +67,8 @@ const pfSrv = createServer(async (req, res) => {
   if (req.url === '/contact/list') {
     return res.end(JSON.stringify({ contacts: [{ id: 971, name: 'Дмитрий', lastname: 'Серов', isCompany: false }] }));
   }
-  if (req.url === '/task/') { taskCreated = b; return res.end(JSON.stringify({ id: 18001 })); }
-  if (req.url === '/task/18001/comments/list') return res.end(JSON.stringify({ comments }));
+  if (req.url === '/task/') { taskCreated = b; tasksCreated++; return res.end(JSON.stringify({ id: 18000 + tasksCreated })); }
+  if (/^\/task\/\d+\/comments\/list$/.test(req.url)) return res.end(JSON.stringify({ comments: req.url.includes('18001') ? comments : [] }));
   if (req.url === '/task/18001/comments/') { posted.push(b); return res.end(JSON.stringify({ id: 900 + posted.length })); }
   res.end('{"result":"success"}');
 }).listen(PF_PORT, '127.0.0.1');
@@ -80,6 +87,7 @@ const bot = spawn(process.execPath, ['bot/bot.mjs'], {
     PLANFIX_API_BASE: `http://127.0.0.1:${PF_PORT}`,
     PLANFIX_PROJECT_ID: '16521',
     PLANFIX_RELAY_SECONDS: '1',
+    PLANFIX_RELAY_MIN_SECONDS: '1',
     BOT_PORT: String(BOT_PORT),
     BOT_STATE_DIR: STATE_DIR,
   },
@@ -247,6 +255,66 @@ try {
   await post(btn('pick:18001'));
   await post(msg('Ещё уточнение'));
   check('через список тоже можно писать', posted.length === 2 && /Ещё уточнение/.test(posted[1].description));
+
+  console.log('\n7б. Сигнал от Planfix вместо опроса');
+  // Останавливаем опрос: делаем задачу «неживой» невозможно, поэтому просто
+  // шлём сигнал и проверяем доставку быстрее, чем прошёл бы тик.
+  comments = [...comments, {
+    id: 505, isDeleted: false, type: 'Comment',
+    owner: { id: 'user:27', name: 'Фиголь Роман' },
+    description: 'Готово, проверьте кассу',
+    recipients: { users: [{ id: 'contact:971', name: 'Серов' }] },
+  }];
+  const beforeHook = sentToUser.length;
+  await fetch(`http://127.0.0.1:${BOT_PORT}/max-hook/secret/planfix`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task: 18001 }),
+  });
+  await sleep(350);
+  check('по сигналу комментарий доставлен сразу, не дожидаясь опроса',
+    sentToUser.slice(beforeHook).some((m) => /Готово, проверьте кассу/.test(m.text || '')),
+    JSON.stringify(sentToUser.slice(beforeHook).map((m) => m.text)));
+  const beforeDup = sentToUser.length;
+  await sleep(1400);
+  check('опрос после сигнала тот же комментарий не дублирует',
+    !sentToUser.slice(beforeDup).some((m) => /Готово, проверьте кассу/.test(m.text || '')));
+  await fetch(`http://127.0.0.1:${BOT_PORT}/max-hook/secret/planfix?task=99999`, { method: 'POST', body: '' });
+  await sleep(200);
+  check('сигнал по чужой задаче игнорируется', logs.join('').includes('не наша, пропускаю'));
+
+  console.log('\n8. Суточный лимит Planfix исчерпан');
+  rateLimited = true;
+  const logLen = logs.length;
+  await sleep(1600);
+  check('бот заметил лимит и встал на паузу', logs.slice(logLen).join('').includes('Лимит API Planfix исчерпан'),
+    logs.slice(logLen).join('').slice(0, 120));
+  const pausedLog = logs.length;
+  await sleep(1200);
+  check('и не долбит API, пока пауза', !logs.slice(pausedLog).join('').includes('Не удалось забрать'),
+    logs.slice(pausedLog).join('').slice(0, 120));
+
+  const USER2 = 971002;
+  const msg2 = (text) => ({ ...msg(text), message: { ...msg(text).message, sender: { user_id: USER2, name: 'Пётр Петров' }, recipient: { chat_id: 778, user_id: USER2 } } });
+  const btn2 = (payload) => ({ ...btn(payload), callback: { ...btn(payload).callback, user: { user_id: USER2, name: 'Пётр Петров' } }, message: { ...btn(payload).message, recipient: { chat_id: 778, user_id: USER2 } } });
+  const createdBefore = tasksCreated;
+  await post(msg2('заявка'));
+  await post(btn2('c:kind:1')); await post(btn2('c:clinic:2')); await post(btn2('c:module:2')); await post(btn2('c:role:1'));
+  await post(msg2('Петров П. П. / логин 9'));
+  await post(msg2('Добавить кнопку печати чека повторно'));
+  await post(msg2('На экране кассы кнопка «Повторить чек» рядом с «Печать»'));
+  await post(msg2('Сейчас переоткрываем смену, теряем время'));
+  await post(btn2('c:urgency:2')); await post(msg2('+7 900 111-22-33')); await post(btn2('files:done'));
+  await post(btn2('ok:send'));
+  await sleep(300);
+  check('во время паузы задача не создавалась', tasksCreated === createdBefore, String(tasksCreated - createdBefore));
+  check('человеку сказано, что заявка сохранена и подождёт',
+    sentToUser.some((m) => /Заявка принята и сохранена/.test(m.text || '')));
+
+  rateLimited = false;
+  await sleep(3200);   // сброс через 2 с + следующий тик
+  check('после сброса заявка из очереди создана', tasksCreated === createdBefore + 1, String(tasksCreated - createdBefore));
+  check('это доработка с полями из очереди', taskCreated?.name?.includes('Доработка') && /повторно/.test(taskCreated?.name || ''), taskCreated?.name);
+  check('человек уведомлён, что заявка передана',
+    sentToUser.some((m) => /передана в поддержку/.test(m.text || '')));
 } finally {
   bot.kill();
   maxSrv.close();

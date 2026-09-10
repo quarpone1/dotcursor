@@ -82,6 +82,8 @@ export async function loadFields() {
   return fieldMap;
 }
 
+export const fieldsLoaded = () => Boolean(fieldMap && Object.keys(fieldMap).length);
+
 /** customFieldData для создания задачи по значениям заявки. Пустые пропускаем. */
 export function customFieldData(values) {
   if (!fieldMap) return [];
@@ -94,6 +96,18 @@ export function customFieldData(values) {
   return out;
 }
 
+/**
+ * Исчерпан ли суточный лимит API. Planfix отвечает 200 с текстом
+ * «Rest API billing - rate limit exceeded, remaining:0, timeToReset:57283».
+ * Возвращает секунды до сброса или 0.
+ */
+export function rateLimitSeconds(errOrText) {
+  const s = String(errOrText?.message ?? errOrText ?? '');
+  if (!/rate limit exceeded/i.test(s)) return 0;
+  const m = /timeToReset:(\d+)/.exec(s);
+  return m ? Number(m[1]) : 600;
+}
+
 async function pf(method, path, body) {
   const res = await fetch(BASE + path, {
     method,
@@ -103,13 +117,17 @@ async function pf(method, path, body) {
       ...(body ? { 'Content-Type': 'application/json' } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(30_000),   // зависший запрос не должен держать бота
   });
   const text = await res.text();
   let json = null;
   try { json = text ? JSON.parse(text) : null; } catch { /* не JSON */ }
-  if (!res.ok) {
+  // Лимит Planfix отдаёт с кодом 200 и result:fail — ловим по тексту
+  if (!res.ok || json?.result === 'fail') {
     const err = new Error(`Planfix ${method} ${path}: ${res.status} ${text.slice(0, 200)}`);
-    err.status = res.status;
+    err.status = res.ok ? 400 : res.status;
+    err.rateLimit = rateLimitSeconds(text);
+    if (err.rateLimit) err.status = 429;
     throw err;
   }
   return json;
@@ -183,6 +201,7 @@ export async function downloadFile(fileId) {
   const res = await fetch(`${BASE}/file/${fileId}/download`, {
     headers: { Authorization: `Bearer ${TOKEN}` },
     redirect: 'follow',
+    signal: AbortSignal.timeout(120_000),
   });
   if (!res.ok) throw new Error(`Planfix download ${fileId}: ${res.status} ${(await res.text()).slice(0, 150)}`);
   const ct = res.headers.get('content-type') || '';
@@ -205,6 +224,7 @@ export async function uploadFile(buffer, filename) {
     method: 'POST',
     headers: { Authorization: `Bearer ${TOKEN}`, Accept: 'application/json' },
     body: fd,
+    signal: AbortSignal.timeout(120_000),
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`Planfix upload: ${res.status} ${text.slice(0, 150)}`);

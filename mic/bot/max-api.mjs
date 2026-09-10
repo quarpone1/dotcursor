@@ -21,6 +21,7 @@ export class MaxApi {
         ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30_000),
     });
     const text = await res.text();
     let json = null;
@@ -69,7 +70,7 @@ export class MaxApi {
     const { url } = await this.call('POST', '/uploads', { params: { type } });
     const fd = new FormData();
     fd.append('data', new Blob([buffer]), filename || 'файл');
-    const res = await fetch(url, { method: 'POST', body: fd });
+    const res = await fetch(url, { method: 'POST', body: fd, signal: AbortSignal.timeout(120_000) });
     const text = await res.text();
     if (!res.ok) throw new Error(`MAX upload ${type}: ${res.status} ${text.slice(0, 150)}`);
     const j = JSON.parse(text);
