@@ -17,7 +17,7 @@ import { createSession, start, handle, summary } from './dialog.mjs';
 import { createTask, findContact, taskName, planfixConfigured,
          uploadFile, newComments, addressedToContact, createContact,
          addComment, isOwnComment, FROM_MAX_MARK, downloadFile, loadFields,
-         rateLimitSeconds, fieldsLoaded } from './planfix.mjs';
+         rateLimitSeconds, fieldsLoaded, changedTasksSince } from './planfix.mjs';
 import { priorityOf } from '../ticket.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -232,6 +232,13 @@ async function saveTickets() {
 let pausedUntil = 0;
 let relayBusy = false;
 let relayCursor = 0;
+// Дельта-опрос: с какого момента спрашивать «что изменилось». Перекрытие в
+// несколько минут — на случай расхождения часов; дубли режет lastCommentId.
+let lastSweepAt = Date.now() - 10 * 60_000;
+const SWEEP_OVERLAP_MS = 5 * 60_000;
+// Слепая порция раз в полчаса — страховка, если фильтр что-то пропустит
+let lastBlindBatchAt = 0;
+const BLIND_BATCH_EVERY_MS = 30 * 60_000;
 
 function pauseFor(err) {
   const sec = err?.rateLimit || rateLimitSeconds(err);
@@ -261,15 +268,42 @@ async function relayOnce() {
 async function relayTick() {
   if (!tickets.length) return;
   let changed = false;
-
-  // По кругу, порциями: каждая живая задача опрашивается раз в N тиков
   const live = tickets.filter(isLive);
   if (!live.length) return;
-  const batch = [];
-  for (let i = 0; i < Math.min(RELAY_BATCH, live.length); i++) {
-    batch.push(live[(relayCursor + i) % live.length]);
+
+  // Основной путь: один запрос «что изменилось с прошлого раза», дальше —
+  // комментарии только по этим задачам. Сто задач стоят столько же, сколько одна.
+  const sweepStarted = Date.now();
+  let changedIds = null;
+  try {
+    changedIds = await changedTasksSince(lastSweepAt - SWEEP_OVERLAP_MS);
+  } catch (err) {
+    if (pauseFor(err)) return;
+    console.error(`Список изменившихся задач не получен (${err.message.slice(0, 120)}) — опрашиваю порцией.`);
   }
-  relayCursor = (relayCursor + batch.length) % live.length;
+
+  let batch;
+  if (changedIds) {
+    lastSweepAt = sweepStarted;
+    batch = live.filter((t) => changedIds.has(t.taskId));
+    if (batch.length) console.log(`Изменились задачи: ${batch.map((t) => t.ticketNo).join(', ')}`);
+    // и изредка — слепая порция по кругу, на случай пропуска фильтром
+    if (Date.now() - lastBlindBatchAt > BLIND_BATCH_EVERY_MS) {
+      lastBlindBatchAt = Date.now();
+      for (let i = 0; i < Math.min(RELAY_BATCH, live.length); i++) {
+        const t = live[(relayCursor + i) % live.length];
+        if (!batch.includes(t)) batch.push(t);
+      }
+      relayCursor = (relayCursor + RELAY_BATCH) % live.length;
+    }
+  } else {
+    // Откат: по кругу, порциями — как раньше
+    batch = [];
+    for (let i = 0; i < Math.min(RELAY_BATCH, live.length); i++) {
+      batch.push(live[(relayCursor + i) % live.length]);
+    }
+    relayCursor = (relayCursor + batch.length) % live.length;
+  }
 
   for (const t of batch) {
     if (apiPaused()) break;
@@ -798,7 +832,7 @@ await registerCommands();
 if (planfixConfigured) {
   setInterval(() => { relayOnce().catch((e) => console.error('Пересылка ответов:', e.message)); },
     RELAY_EVERY_MS).unref();
-  console.log(`Ответы инженеров: опрос каждые ${RELAY_EVERY_MS / 1000} с по ${RELAY_BATCH} задач, режим «${RELAY_MODE}». ` +
-    'Мгновенно — по сигналу Planfix на …/planfix.');
+  console.log(`Ответы инженеров: каждые ${RELAY_EVERY_MS / 1000} с один запрос «что изменилось» + комментарии ` +
+    `только по изменившимся задачам; режим «${RELAY_MODE}». Слепая порция по ${RELAY_BATCH} задач раз в 30 мин.`);
 }
 if (MODE === 'webhook') runWebhook(); else await runPolling();

@@ -23,6 +23,8 @@ let taskCreated = null;
 let comments = [];          // что «написали» инженеры в задаче
 let rateLimited = false;    // имитация исчерпанного суточного лимита Planfix
 let tasksCreated = 0;
+let changedList = 'auto';   // 'auto' — отдаём задачу 18001 как изменившуюся; 'error' — ломаем фильтр; массив — свои id
+const listCalls = [];       // фильтры, с которыми бот спрашивал список
 const posted = [];          // комментарии, которые бот отправил в задачу
 
 const body = async (req) => {
@@ -68,6 +70,12 @@ const pfSrv = createServer(async (req, res) => {
     return res.end(JSON.stringify({ contacts: [{ id: 971, name: 'Дмитрий', lastname: 'Серов', isCompany: false }] }));
   }
   if (req.url === '/task/') { taskCreated = b; tasksCreated++; return res.end(JSON.stringify({ id: 18000 + tasksCreated })); }
+  if (req.url === '/task/list') {
+    listCalls.push(b.filters || []);
+    if (changedList === 'error') return res.end(JSON.stringify({ result: 'fail', code: 1, error: 'bad filter' }));
+    const ids = changedList === 'auto' ? [18001] : changedList;
+    return res.end(JSON.stringify({ tasks: ids.map((id) => ({ id })) }));
+  }
   if (/^\/task\/\d+\/comments\/list$/.test(req.url)) return res.end(JSON.stringify({ comments: req.url.includes('18001') ? comments : [] }));
   if (req.url === '/task/18001/comments/') { posted.push(b); return res.end(JSON.stringify({ id: 900 + posted.length })); }
   res.end('{"result":"success"}');
@@ -182,9 +190,47 @@ try {
 
   check('под ответом инженера есть кнопка «Ответить»', /reply:18001/.test(lastButtons()), lastButtons().slice(0, 80));
 
-  console.log('\n3б. Инженер прикладывает файлы');
+  console.log('\n3а. Опрос идёт через список изменившихся задач');
+  const f = listCalls[listCalls.length - 1] || [];
+  check('бот спрашивает «что изменилось» одним запросом', listCalls.length > 0);
+  check('фильтр по дате изменения/комментария (type 79, gt, с временем)',
+    f.some((x) => x.type === 79 && x.operator === 'gt' && x.value?.dateType === 'otherDate_withTime' && /^\d\d-\d\d-\d{4} \d\d:\d\d$/.test(x.value?.dateFrom || '')),
+    JSON.stringify(f));
+  check('и по проекту (type 5)', f.some((x) => x.type === 5 && x.value === 16521), JSON.stringify(f));
+
+  console.log('\n3а-2. Задача не в списке изменившихся — не опрашивается');
+  changedList = [];
+  comments = [...comments, {
+    id: 502, isDeleted: false, type: 'Comment',
+    owner: { id: 'user:27', name: 'Фиголь Роман' },
+    description: 'Это НЕ должно прийти, пока фильтр молчит',
+    recipients: { users: [{ id: 'contact:971', name: 'Серов' }] },
+  }];
+  await sleep(1600);
+  check('без сигнала об изменении комментарии не забираются',
+    !sentToUser.some((m) => /НЕ должно прийти/.test(m.text || '')));
+  changedList = 'auto';
+  await sleep(1600);
+  check('как только задача появилась в списке — доставлено',
+    sentToUser.some((m) => /НЕ должно прийти/.test(m.text || '')));
+
+  console.log('\n3а-3. Фильтр сломался — откат на порционный опрос');
+  changedList = 'error';
   comments = [...comments, {
     id: 503, isDeleted: false, type: 'Comment',
+    owner: { id: 'user:27', name: 'Фиголь Роман' },
+    description: 'Пришло через откат',
+    recipients: { users: [{ id: 'contact:971', name: 'Серов' }] },
+  }];
+  await sleep(1600);
+  check('при ошибке списка бот всё равно доставил порционным опросом',
+    sentToUser.some((m) => /Пришло через откат/.test(m.text || '')));
+  check('и написал об откате в лог', logs.join('').includes('опрашиваю порцией'));
+  changedList = 'auto';
+
+  console.log('\n3б. Инженер прикладывает файлы');
+  comments = [...comments, {
+    id: 504, isDeleted: false, type: 'Comment',
     owner: { id: 'user:27', name: 'Фиголь Роман' },
     description: 'Вот скрин и лог',
     recipients: { users: [{ id: 'contact:971', name: 'Серов' }] },
@@ -205,7 +251,7 @@ try {
 
   console.log('\n3в. Комментарий из одного файла, без текста');
   comments = [...comments, {
-    id: 504, isDeleted: false, type: 'Comment',
+    id: 505, isDeleted: false, type: 'Comment',
     owner: { id: 'user:27', name: 'Фиголь Роман' },
     description: '',
     recipients: { users: [{ id: 'contact:971', name: 'Серов' }] },
@@ -235,7 +281,7 @@ try {
 
   console.log('\n6. Свой комментарий не возвращается эхом');
   comments = [...comments, {
-    id: 502, isDeleted: false, type: 'Comment',
+    id: 506, isDeleted: false, type: 'Comment',
     owner: { id: 'user:99', name: 'API' },
     description: '💬 Из MAX от Дмитрий Серов:<br>Касса номер 3, у окна',
     recipients: { users: [{ id: 'contact:971', name: 'Серов' }] },
@@ -260,7 +306,7 @@ try {
   // Останавливаем опрос: делаем задачу «неживой» невозможно, поэтому просто
   // шлём сигнал и проверяем доставку быстрее, чем прошёл бы тик.
   comments = [...comments, {
-    id: 505, isDeleted: false, type: 'Comment',
+    id: 507, isDeleted: false, type: 'Comment',
     owner: { id: 'user:27', name: 'Фиголь Роман' },
     description: 'Готово, проверьте кассу',
     recipients: { users: [{ id: 'contact:971', name: 'Серов' }] },

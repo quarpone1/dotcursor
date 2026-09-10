@@ -231,6 +231,38 @@ export async function uploadFile(buffer, filename) {
   return JSON.parse(text).id;
 }
 
+// Planfix трактует дату фильтра во времени аккаунта. Сервер живёт в TZ из
+// настроек (Asia/Yekaterinburg); если аккаунт в другом поясе — поправка минутами.
+const TZ_OFFSET_MIN = Number(process.env.PLANFIX_TZ_OFFSET_MIN || 0);
+
+const pad = (n) => String(n).padStart(2, '0');
+export function planfixDateTime(ms) {
+  const d = new Date(ms + TZ_OFFSET_MIN * 60_000);
+  return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * Задачи проекта, в которых что-то менялось (в т.ч. комментарий) после `sinceMs`.
+ * Один запрос вместо опроса каждой задачи: фильтр type 79 — «дата последнего
+ * изменения или комментария». Возвращает Set id задач или null при ошибке —
+ * тогда вызывающий откатывается на порционный опрос.
+ */
+export async function changedTasksSince(sinceMs) {
+  const filters = [{
+    type: 79, operator: 'gt',
+    value: { dateType: 'otherDate_withTime', dateFrom: planfixDateTime(sinceMs) },
+  }];
+  if (PROJECT_ID) filters.push({ type: 5, operator: 'equal', value: PROJECT_ID });
+  const ids = new Set();
+  for (let offset = 0; offset < 1000; offset += 100) {
+    const res = await pf('POST', '/task/list', { offset, pageSize: 100, fields: 'id', filters });
+    const page = res?.tasks || [];
+    for (const t of page) ids.add(Number(t.id));
+    if (page.length < 100) break;
+  }
+  return ids;
+}
+
 /**
  * Комментарии задачи новее указанного id.
  * Возвращает только те, что написал сотрудник: карточка заявки и реплики
