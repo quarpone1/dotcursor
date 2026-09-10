@@ -7,6 +7,7 @@ const PORT = 3495;
 process.env.PLANFIX_API_TOKEN = 'test-token';
 process.env.PLANFIX_API_BASE = `http://127.0.0.1:${PORT}`;
 process.env.PLANFIX_PROJECT_ID = '4242';
+process.env.PLANFIX_MIN_GAP_MS = '0';
 
 let failed = 0;
 const check = (name, cond, extra = '') => {

@@ -96,6 +96,7 @@ const bot = spawn(process.execPath, ['bot/bot.mjs'], {
     PLANFIX_PROJECT_ID: '16521',
     PLANFIX_RELAY_SECONDS: '1',
     PLANFIX_RELAY_MIN_SECONDS: '1',
+    PLANFIX_MIN_GAP_MS: '0',
     BOT_PORT: String(BOT_PORT),
     BOT_STATE_DIR: STATE_DIR,
   },

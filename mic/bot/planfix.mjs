@@ -108,7 +108,23 @@ export function rateLimitSeconds(errOrText) {
   return m ? Number(m[1]) : 600;
 }
 
+// Второй лимит Planfix — 1 запрос в секунду. Держим интервал между любыми
+// вызовами API: пачка изменившихся задач уйдёт не залпом, а по одной в секунду.
+const MIN_GAP_MS = Number(process.env.PLANFIX_MIN_GAP_MS || 1000);
+let lastCallAt = 0;
+let gate = Promise.resolve();
+async function throttle() {
+  const my = gate.then(async () => {
+    const wait = lastCallAt + MIN_GAP_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastCallAt = Date.now();
+  });
+  gate = my.catch(() => {});
+  return my;
+}
+
 async function pf(method, path, body) {
+  await throttle();
   const res = await fetch(BASE + path, {
     method,
     headers: {
@@ -198,6 +214,7 @@ export async function createContact(fullName) {
  * Planfix может отдать и сам бинарник, и JSON со ссылкой — принимаем оба варианта.
  */
 export async function downloadFile(fileId) {
+  await throttle();
   const res = await fetch(`${BASE}/file/${fileId}/download`, {
     headers: { Authorization: `Bearer ${TOKEN}` },
     redirect: 'follow',
@@ -218,6 +235,7 @@ export async function downloadFile(fileId) {
 
 /** Загружает файл в Planfix. Возвращает id, который цепляется к задаче. */
 export async function uploadFile(buffer, filename) {
+  await throttle();
   const fd = new FormData();
   fd.append('file', new Blob([buffer]), filename || 'файл');
   const res = await fetch(BASE + '/file/', {
