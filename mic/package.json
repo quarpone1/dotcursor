@@ -20,6 +20,7 @@
     "max:webhook": "node --env-file-if-exists=.env tools/max-webhook.mjs",
     "planfix:check": "node --env-file-if-exists=.env tools/check-planfix.mjs",
     "planfix:test": "node test/planfix.test.mjs",
+    "planfix:limit": "node --env-file-if-exists=.env tools/planfix-limit.mjs",
     "relay:test": "node test/relay.test.mjs"
   },
   "dependencies": {
