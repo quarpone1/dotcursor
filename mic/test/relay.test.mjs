@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { rm } from 'node:fs/promises';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const MAX_PORT = 3496, PF_PORT = 3497, BOT_PORT = 3498;
+const MAX_PORT = 3496, PF_PORT = 3497, BOT_PORT = 3498, YT_PORT = 3495;
 const STATE_DIR = join(ROOT, 'test', '.tmp-relay');
 
 let failed = 0;
@@ -81,6 +81,35 @@ const pfSrv = createServer(async (req, res) => {
   res.end('{"result":"success"}');
 }).listen(PF_PORT, '127.0.0.1');
 
+/* ---------- поддельный YouTrack ---------- */
+const ytIssues = [];         // что бот создал в YouTrack
+const ytComments = [];       // что бот написал в задачу YouTrack
+const ytUploads = [];        // вложения, которые бот загрузил в YouTrack
+let ytEngineerComments = []; // что «написали» инженеры в YouTrack
+let ytDown = false;          // YouTrack недоступен (создание падает)
+const ytQueries = [];
+const ytSrv = createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://x');
+  const b = await body(req);
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (url.pathname === '/api/files/yt-1') { res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(Buffer.alloc(1024, 3)); }
+  if (url.pathname === '/api/admin/projects') return send(200, [{ id: '59-247', shortName: 'MIC', name: 'Сопровождение МИЦ' }]);
+  if (url.pathname === '/api/issues' && req.method === 'POST') {
+    if (ytDown) return send(503, { error: 'unavailable' });
+    ytIssues.push(b);
+    return send(200, { id: `2-${ytIssues.length}`, idReadable: `MIC-${ytIssues.length}` });
+  }
+  if (url.pathname === '/api/issues' && req.method === 'GET') {
+    ytQueries.push(url.searchParams.get('query'));
+    return send(200, ytIssues.map((_, i) => ({ id: `2-${i + 1}` })));
+  }
+  if (/^\/api\/issues\/[^/]+\/attachments$/.test(url.pathname)) { ytUploads.push({ issue: url.pathname.split('/')[3], bytes: b.raw?.length || 0 }); return send(200, [{ id: 'a1' }]); }
+  if (/^\/api\/issues\/[^/]+\/comments$/.test(url.pathname) && req.method === 'POST') { ytComments.push({ issue: url.pathname.split('/')[3], ...b }); return send(200, { id: 'c-new' }); }
+  if (/^\/api\/issues\/2-1\/comments$/.test(url.pathname)) return send(200, ytEngineerComments);
+  if (/^\/api\/issues\/[^/]+\/comments$/.test(url.pathname)) return send(200, []);
+  send(404, {});
+}).listen(YT_PORT, '127.0.0.1');
+
 await rm(STATE_DIR, { recursive: true, force: true });
 
 const bot = spawn(process.execPath, ['bot/bot.mjs'], {
@@ -97,6 +126,10 @@ const bot = spawn(process.execPath, ['bot/bot.mjs'], {
     PLANFIX_RELAY_SECONDS: '1',
     PLANFIX_RELAY_MIN_SECONDS: '1',
     PLANFIX_MIN_GAP_MS: '0',
+    YOUTRACK_URL: `http://127.0.0.1:${YT_PORT}`,
+    YOUTRACK_TOKEN: 'yt-token',
+    YOUTRACK_PROJECT: 'MIC',
+    YOUTRACK_MIN_GAP_MS: '0',
     BOT_PORT: String(BOT_PORT),
     BOT_STATE_DIR: STATE_DIR,
   },
@@ -160,6 +193,14 @@ try {
   check('заказчик — найденный контакт', taskCreated?.counterparty?.id === 'contact:971',
     JSON.stringify(taskCreated?.counterparty));
   check('задача легла в проект', taskCreated?.project?.id === 16521, JSON.stringify(taskCreated?.project));
+
+  console.log('\n1а. Дубль заявки в YouTrack');
+  check('задача создана и в YouTrack', ytIssues.length === 1, String(ytIssues.length));
+  const ytf = Object.fromEntries((ytIssues[0]?.customFields || []).map((f) => [f.name, f.value?.name ?? f.value?.login ?? f.value]));
+  check('в проекте MIC, с тем же номером заявки', ytIssues[0]?.project?.id === '59-247' && /^ТП-/.test(ytf['Номер заявки'] || ''), JSON.stringify(ytf));
+  check('клиника и исполнитель по клинике (МедГород → deravchuk)', ytf['Клиника'] === 'МедГород' && ytf['Разработчик'] === 'deravchuk', JSON.stringify(ytf));
+  check('тип и приоритет', ytf.Type === 'Bug' && ytf['Тип заявки'] === 'Ошибка' && ytf.Priority === 'Critical', JSON.stringify(ytf));
+  check('описание — та же карточка заявки', /Не печатается чек/.test(ytIssues[0]?.description || ''));
 
   console.log('\n2. Инженер пишет ВНУТРЕННИЙ комментарий');
   comments = [{
@@ -279,6 +320,8 @@ try {
   check('комментарий помечен как из MAX', /Из MAX/.test(posted[0].description));
   check('владелец — контакт человека', posted[0].owner?.id === 'contact:971', JSON.stringify(posted[0].owner));
   check('человеку подтвердили отправку', /Отправлено в заявку/.test(lastText()), lastText().slice(0, 40));
+  check('и продублирован в YouTrack', ytComments.length === 1 && /Касса номер 3/.test(ytComments[0].text) && /Из MAX/.test(ytComments[0].text),
+    JSON.stringify(ytComments[0]).slice(0, 120));
 
   console.log('\n6. Свой комментарий не возвращается эхом');
   comments = [...comments, {
@@ -362,10 +405,65 @@ try {
   check('это доработка с полями из очереди', taskCreated?.name?.includes('Доработка') && /повторно/.test(taskCreated?.name || ''), taskCreated?.name);
   check('человек уведомлён, что заявка передана',
     sentToUser.some((m) => /передана в поддержку/.test(m.text || '')));
+
+  console.log('\n9. Инженер отвечает из YouTrack');
+  const ytBefore = sentToUser.length;
+  const ytUploadsBefore = maxUploads.length;
+  ytEngineerComments = [
+    { id: 'y1', text: `💬 Из MAX от Дмитрий Серов:\nКасса номер 3, у окна`, created: Date.now() - 1000, deleted: false, author: { login: 'figol_rs', fullName: 'Фиголь Роман' } },
+    { id: 'y2', text: 'Проверьте драйвер, версия 2.1', created: Date.now(), deleted: false, author: { login: 'kasimov_dv', fullName: 'Касимов Дмитрий' },
+      attachments: [{ id: 'yt-1', name: 'драйвер.png', url: '/api/files/yt-1', size: 1024 }] },
+  ];
+  await sleep(1800);
+  const fromYt = sentToUser.slice(ytBefore);
+  const ytReply = fromYt.find((m) => /Проверьте драйвер/.test(m.text || ''));
+  check('ответ из YouTrack доставлен в MAX', Boolean(ytReply), JSON.stringify(fromYt.map((m) => m.text)));
+  check('видно, что это YouTrack и по какой заявке', /Ответ по заявке ТП-.*\(YouTrack MIC-1\)/.test(ytReply?.text || ''), ytReply?.text?.slice(0, 60));
+  check('указан автор', /Касимов Дмитрий/.test(ytReply?.text || ''));
+  check('кнопка «Ответить» под ответом', /reply:18001/.test(JSON.stringify(ytReply?.attachments || [])));
+  check('свой комментарий (из MAX) эхом не вернулся', !fromYt.some((m) => /Касса номер 3/.test(m.text || '')));
+  check('вложение скачано из YouTrack и загружено в MAX', maxUploads.length === ytUploadsBefore + 1, String(maxUploads.length - ytUploadsBefore));
+  check('вложение доставлено человеку', fromYt.some((m) => /драйвер\.png/.test(m.text || '') && JSON.stringify(m.attachments || []).includes('TOKEN')));
+  check('опрос YouTrack идёт запросом «что изменилось»', ytQueries.some((q) => /project: MIC updated: \d{4}-/.test(q || '')), ytQueries.at(-1));
+  const cnt9 = sentToUser.length;
+  await sleep(1500);
+  check('повтор не дублируется', sentToUser.length === cnt9, `было ${cnt9}, стало ${sentToUser.length}`);
+
+  console.log('\n9а. Ответ человека уходит в обе системы с файлом');
+  await post(btn('reply:18001'));
+  const ytCommentsBefore = ytComments.length; const postedBefore = posted.length;
+  await post(msg('Обновил драйвер, не помогло'));
+  check('в Planfix', posted.length === postedBefore + 1 && /Обновил драйвер/.test(posted.at(-1).description));
+  check('в YouTrack', ytComments.length === ytCommentsBefore + 1 && /Обновил драйвер/.test(ytComments.at(-1).text));
+  check('в YouTrack — в ту же задачу', ytComments.at(-1).issue === '2-1', ytComments.at(-1).issue);
+
+  console.log('\n10. YouTrack недоступен — Planfix не страдает, дубль доделывается позже');
+  ytDown = true;
+  const USER3 = 971003;
+  const msg3 = (text) => ({ ...msg(text), message: { ...msg(text).message, sender: { user_id: USER3, name: 'Анна Иванова' }, recipient: { chat_id: 779, user_id: USER3 } } });
+  const btn3 = (payload) => ({ ...btn(payload), callback: { ...btn(payload).callback, user: { user_id: USER3, name: 'Анна Иванова' } }, message: { ...btn(payload).message, recipient: { chat_id: 779, user_id: USER3 } } });
+  const pfBefore10 = tasksCreated, ytBefore10 = ytIssues.length;
+  await post(msg3('заявка'));
+  await post(btn3('c:kind:0')); await post(btn3('c:clinic:1')); await post(btn3('c:module:0')); await post(btn3('c:role:0'));
+  await post(msg3('Иванова А. А. / логин 5')); await post(btn3('skip'));
+  await post(msg3('Не открывается расписание')); await post(msg3('1. Открыть расписание')); await post(msg3('Белый экран')); await post(msg3('Расписание'));
+  await post(btn3('c:urgency:1')); await post(msg3('+7 900 222-33-44')); await post(btn3('files:done'));
+  await post(btn3('ok:send'));
+  await sleep(400);
+  check('задача в Planfix создана несмотря на сбой YouTrack', tasksCreated === pfBefore10 + 1, String(tasksCreated - pfBefore10));
+  check('в YouTrack пока нет', ytIssues.length === ytBefore10);
+  check('человеку сказано, что заявка передана', sentToUser.some((m) => /передана в поддержку/.test(m.text || '')));
+  check('в логе — повторю позже', logs.join('').includes('повторю позже'));
+  ytDown = false;
+  await sleep(1800);
+  check('после восстановления дубль создан', ytIssues.length === ytBefore10 + 1, String(ytIssues.length - ytBefore10));
+  const ytf10 = Object.fromEntries((ytIssues.at(-1)?.customFields || []).map((f) => [f.name, f.value?.name ?? f.value?.login ?? f.value]));
+  check('с полями из снимка заявки (Нефтяник стационар → kasimov_dv, Major)', ytf10['Клиника'] === 'Нефтяник стационар' && ytf10['Разработчик'] === 'kasimov_dv' && ytf10.Priority === 'Major', JSON.stringify(ytf10));
 } finally {
   bot.kill();
   maxSrv.close();
   pfSrv.close();
+  ytSrv.close();
   await sleep(150);
   await rm(STATE_DIR, { recursive: true, force: true });
 }

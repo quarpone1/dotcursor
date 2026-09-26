@@ -41,6 +41,14 @@ export const CLINIC_ENGINEER = {
   'Медикус (Медавто)': 'user:43',
 };
 
+// Те же инженеры в YouTrack (логины сверены с /users).
+export const ENGINEER_LOGINS = {
+  'user:1':  'deravchuk',
+  'user:7':  'kasimov_dv',
+  'user:43': 'perevertov_ks',
+  'user:63': 'shcherbakov_eg',
+};
+
 export const MODULES = [
   'ЭМК',
   'Локус (регистратура/расписание)',

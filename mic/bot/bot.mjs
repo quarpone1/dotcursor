@@ -19,6 +19,7 @@ import { createTask, findContact, taskName, planfixConfigured,
          addComment, isOwnComment, FROM_MAX_MARK, downloadFile, loadFields,
          rateLimitSeconds, fieldsLoaded, changedTasksSince } from './planfix.mjs';
 import { priorityOf } from '../ticket.mjs';
+import * as yt from './youtrack.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -147,23 +148,51 @@ async function resolveContact(session) {
   return contact;
 }
 
-/** Тянет файл из MAX и кладёт его в Planfix. Возвращает id файла или null. */
-async function transferFile(file) {
-  if (!file?.url) {
-    console.error(`У вложения «${file?.name}» нет ссылки — пропускаю.`);
+/** Скачивает вложение из MAX. null — если ссылки нет или MAX не отдал. */
+async function fetchMaxFile(file) {
+  if (!file?.url) { console.error(`У вложения «${file?.name}» нет ссылки — пропускаю.`); return null; }
+  try {
+    const res = await fetch(file.url, { headers: { Authorization: TOKEN }, signal: AbortSignal.timeout(120_000) });
+    if (!res.ok) throw new Error(`MAX отдал ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
+  } catch (err) {
+    console.error(`Вложение «${file.name}» не скачалось из MAX: ${err.message}`);
     return null;
   }
+}
+
+/** Тянет файл из MAX и кладёт его в Planfix. Возвращает id файла или null. */
+async function transferFile(file, buf = null) {
+  buf = buf || await fetchMaxFile(file);
+  if (!buf) return null;
   try {
-    const res = await fetch(file.url, { headers: { Authorization: TOKEN } });
-    if (!res.ok) throw new Error(`MAX отдал ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
     const id = await uploadFile(buf, file.name);
     console.log(`  вложение «${file.name}» (${(buf.length / 1024).toFixed(0)} КБ) → файл Planfix ${id}`);
     return id;
   } catch (err) {
-    console.error(`Вложение «${file.name}» не перенеслось: ${err.message}`);
+    console.error(`Вложение «${file.name}» не легло в Planfix: ${err.message}`);
     return null;
   }
+}
+
+/** Дубль заявки в YouTrack: задача + вложения. Ошибка здесь не должна ронять Planfix. */
+async function createYouTrackIssue(session, buffers) {
+  const [priority] = priorityOf(session.answers.urgency);
+  const issue = await yt.createIssue({
+    summary: taskName({ ticketNo: session.ticketNo, priority, fields: session.answers }),
+    description: summary(session),
+    fields: session.answers,
+    ticketNo: session.ticketNo,
+  });
+  let files = 0;
+  for (const f of session.files || []) {
+    const buf = buffers.get(f) || await fetchMaxFile(f);
+    if (!buf) continue;
+    try { await yt.uploadAttachment(issue.id, buf, f.name); files++; }
+    catch (err) { console.error(`  вложение «${f.name}» не легло в YouTrack: ${err.message}`); }
+  }
+  console.log(`${session.ticketNo} → YouTrack ${issue.key}${files ? `, файлов ${files}` : ''}`);
+  return issue;
 }
 
 /** Заявка становится ОТДЕЛЬНОЙ задачей в Planfix, вместе с файлами. */
@@ -171,9 +200,12 @@ async function createPlanfixTask(session) {
   const [priority] = priorityOf(session.answers.urgency);
   const contact = await resolveContact(session);
 
+  const buffers = new Map();
   const fileIds = [];
   for (const f of session.files || []) {
-    const id = await transferFile(f);
+    const buf = await fetchMaxFile(f);
+    if (buf) buffers.set(f, buf);
+    const id = await transferFile(f, buf);
     if (id) fileIds.push(id);
   }
 
@@ -188,6 +220,13 @@ async function createPlanfixTask(session) {
   console.log(`${session.ticketNo} → задача Planfix ${id}` +
     `${contact ? `, контакт ${contact.id}` : ''}${fileIds.length ? `, файлов ${fileIds.length}` : ''}`);
 
+  // Дубль в YouTrack. Не получилось — запомним снимок и доделаем на ближайшем тике.
+  let issue = null;
+  if (yt.youtrackConfigured) {
+    try { issue = await createYouTrackIssue(session, buffers); }
+    catch (err) { console.error(`${session.ticketNo}: YouTrack не создался (${err.message.slice(0, 120)}) — повторю позже.`); }
+  }
+
   // Ставим задачу на присмотр: ответы инженера отсюда поедут обратно в MAX.
   if (id) {
     tickets.push({
@@ -200,10 +239,33 @@ async function createPlanfixTask(session) {
       lastCommentId: 0,
       createdAt: Date.now(),
       lastActivity: Date.now(),
+      ytId: issue?.id || null,
+      ytKey: issue?.key || null,
+      ytSince: Date.now(),
+      ytPending: (!issue && yt.youtrackConfigured)
+        ? { answers: session.answers, files: session.files || [], ticketNo: session.ticketNo, tries: 0 }
+        : null,
     });
     await saveTickets();
   }
   return id;
+}
+
+/** Доделывает дубли в YouTrack, которые не создались с первого раза. */
+async function retryYouTrackPending() {
+  for (const t of tickets) {
+    if (!t.ytPending || t.ytId) continue;
+    if (t.ytPending.tries >= 10) continue;
+    t.ytPending.tries++;
+    try {
+      const fake = { ticketNo: t.ticketNo, answers: t.ytPending.answers, files: t.ytPending.files, user: { id: t.userId } };
+      const issue = await createYouTrackIssue(fake, new Map());
+      t.ytId = issue.id; t.ytKey = issue.key; t.ytSince = Date.now(); t.ytPending = null;
+      await saveTickets();
+    } catch (err) {
+      console.error(`${t.ticketNo}: YouTrack, попытка ${t.ytPending.tries}: ${err.message.slice(0, 120)}`);
+    }
+  }
 }
 
 /* ---------- ответы инженеров обратно в MAX ---------- */
@@ -254,15 +316,82 @@ function pauseFor(err) {
 const apiPaused = () => Date.now() < pausedUntil;
 
 async function relayOnce() {
-  if (!planfixConfigured || relayBusy || apiPaused()) return;
+  if (relayBusy) return;
   relayBusy = true;
   try {
-    if (!fieldsLoaded()) await loadFields().catch(() => {});   // не прочитались при старте
-    await flushQueue();
-    await relayTick();
+    if (planfixConfigured && !apiPaused()) {
+      if (!fieldsLoaded()) await loadFields().catch(() => {});   // не прочитались при старте
+      await flushQueue();
+      await relayTick();
+    }
+    // YouTrack живёт своей жизнью: пауза Planfix его не касается
+    if (yt.youtrackConfigured) {
+      await retryYouTrackPending().catch((e) => console.error('YouTrack, очередь дублей:', e.message));
+      await relayYouTrackTick().catch((e) => console.error('YouTrack, опрос:', e.message));
+    }
   } finally {
     relayBusy = false;
   }
+}
+
+/* ---------- ответы инженеров из YouTrack ---------- */
+
+let ytSweepAt = Date.now() - 10 * 60_000;
+
+async function relayYouTrackTick() {
+  const live = tickets.filter((t) => t.ytId && isLive(t));
+  if (!live.length) return;
+  const started = Date.now();
+  let changedIds = null;
+  try { changedIds = await yt.changedIssuesSince(ytSweepAt - SWEEP_OVERLAP_MS); }
+  catch (err) { console.error(`YouTrack: список изменившихся не получен (${err.message.slice(0, 100)}) — опрашиваю все живые.`); }
+  if (changedIds) ytSweepAt = started;
+  const batch = changedIds ? live.filter((t) => changedIds.has(t.ytId)) : live.slice(0, RELAY_BATCH);
+  let changed = false;
+  for (const t of batch) if (await relayYouTrackTicket(t)) changed = true;
+  if (changed) await saveTickets();
+}
+
+/** Новые комментарии инженеров в задаче YouTrack → человеку в MAX, с файлами. */
+async function relayYouTrackTicket(t) {
+  let changed = false;
+  try {
+    const fresh = await yt.newComments(t.ytId, t.ytSince || 0);
+    for (const c of fresh) {
+      t.ytSince = Math.max(t.ytSince || 0, Number(c.created));
+      changed = true;
+      const text = String(c.text || '').trim();
+      const files = c.attachments || [];
+      const who = c.author?.fullName || c.author?.login || 'Техподдержка';
+      const body = text || (files.length ? '(файлы во вложении)' : '');
+      if (!body) continue;
+      await api.send({
+        userId: t.userId, chatId: t.chatId,
+        text: `Ответ по заявке ${t.ticketNo} (YouTrack ${t.ytKey})
+${who}:
+
+${body}`,
+        buttons: [[{ text: '💬 Ответить', payload: `reply:${t.taskId}` }]],
+      });
+      t.lastActivity = Date.now();
+      console.log(`Ответ по ${t.ticketNo} из YouTrack доставлен в MAX (комментарий ${c.id}).`);
+      for (const f of files) {
+        try {
+          const buf = await yt.downloadAttachment(f.url);
+          const att = await api.upload(buf, f.name);
+          await api.send({ userId: t.userId, chatId: t.chatId, text: `📎 ${f.name}`, attachments: [att] });
+          console.log(`  файл «${f.name}» (${(buf.length / 1024).toFixed(0)} КБ) YouTrack → MAX`);
+        } catch (err) {
+          console.error(`  файл «${f.name}» из YouTrack не доставлен: ${err.message}`);
+          await api.send({ userId: t.userId, chatId: t.chatId,
+            text: `📎 К ответу приложен файл «${f.name}», но передать его не удалось — он есть в задаче ${t.ytKey}.`, buttons: [] }).catch(() => {});
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`YouTrack: не удалось забрать комментарии по ${t.ticketNo}: ${err.message}`);
+  }
+  return changed;
 }
 
 async function relayTick() {
@@ -522,8 +651,11 @@ async function postReply(ev, mode) {
   if (!t) { await exitReply(ev); return; }
 
   const fileIds = [];
+  const buffers = [];
   for (const f of ev.attachments || []) {
-    const id = await transferFile(f);
+    const buf = await fetchMaxFile(f);
+    if (buf) buffers.push([f, buf]);
+    const id = await transferFile(f, buf);
     if (id) fileIds.push(id);
   }
   const said = (ev.text || '').trim();
@@ -539,6 +671,21 @@ async function postReply(ev, mode) {
     t.lastActivity = Date.now();
     await saveTickets();
     console.log(`${t.ticketNo} ← ответ человека (${fileIds.length} файл.)`);
+
+    // и то же самое — в дубль в YouTrack, если он есть
+    if (t.ytId) {
+      try {
+        await yt.addComment(t.ytId, `${yt.FROM_MAX_MARK} от ${ev.userName || 'пользователя'}:\n${body}` +
+          (buffers.length ? `\n(файлы — во вложениях задачи)` : ''));
+        for (const [f, buf] of buffers) {
+          try { await yt.uploadAttachment(t.ytId, buf, f.name); }
+          catch (err) { console.error(`  файл «${f.name}» не лёг в YouTrack: ${err.message}`); }
+        }
+        console.log(`${t.ticketNo} ← ответ человека продублирован в YouTrack ${t.ytKey}`);
+      } catch (err) {
+        console.error(`${t.ticketNo}: ответ не продублировался в YouTrack: ${err.message}`);
+      }
+    }
     await reply(ev, [{
       text: `Отправлено в заявку ${t.ticketNo}. Можно написать ещё или нажать «Готово».`,
       buttons: REPLY_BTNS(t.taskId),
@@ -827,9 +974,10 @@ await loadTickets();
 await loadReplies();
 await loadQueue();
 if (planfixConfigured) await loadFields();
+if (yt.youtrackConfigured) await yt.loadProject().catch((e) => console.error('YouTrack недоступен при старте:', e.message));
 await registerCommands();
 
-if (planfixConfigured) {
+if (planfixConfigured || yt.youtrackConfigured) {
   setInterval(() => { relayOnce().catch((e) => console.error('Пересылка ответов:', e.message)); },
     RELAY_EVERY_MS).unref();
   console.log(`Ответы инженеров: каждые ${RELAY_EVERY_MS / 1000} с один запрос «что изменилось» + комментарии ` +
