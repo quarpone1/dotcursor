@@ -22,7 +22,8 @@
     "planfix:test": "node test/planfix.test.mjs",
     "planfix:limit": "node --env-file-if-exists=.env tools/planfix-limit.mjs",
     "relay:test": "node test/relay.test.mjs",
-    "youtrack:test": "node test/youtrack.test.mjs"
+    "youtrack:test": "node test/youtrack.test.mjs",
+    "files:test": "node test/files.test.mjs"
   },
   "dependencies": {
     "nodemailer": "^7.0.9"

@@ -155,6 +155,49 @@ function parseAttachment(a) {
   };
 }
 
+/**
+ * MAX отдаёт фото и голосовые без имени — «изображение», «аудио». Без расширения
+ * Planfix и YouTrack не показывают превью. Расширение берём из Content-Type,
+ * а если он невнятный (octet-stream) — по сигнатуре файла.
+ */
+export function withExtension(name, contentType, buf) {
+  name = String(name || 'файл').trim() || 'файл';
+  if (/\.[a-z0-9]{1,5}$/i.test(name)) return name;
+  const byType = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'image/heic': 'heic',
+    'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm',
+    'audio/mpeg': 'mp3', 'audio/ogg': 'ogg', 'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/wav': 'wav',
+    'application/pdf': 'pdf', 'application/zip': 'zip', 'text/plain': 'txt',
+  };
+  const ct = String(contentType || '').split(';')[0].trim().toLowerCase();
+  let ext = byType[ct];
+  if (!ext && buf?.length >= 12) {
+    const h = buf.subarray(0, 12).toString('hex');
+    const s8 = buf.subarray(0, 8).toString('latin1');
+    if (h.startsWith('ffd8ff')) ext = 'jpg';
+    else if (h.startsWith('89504e47')) ext = 'png';
+    else if (h.startsWith('47494638')) ext = 'gif';
+    else if (h.startsWith('52494646') && buf.subarray(8, 12).toString('latin1') === 'WEBP') ext = 'webp';
+    else if (h.startsWith('25504446')) ext = 'pdf';
+    else if (buf.subarray(4, 8).toString('latin1') === 'ftyp') ext = /^ftypqt/.test(buf.subarray(4, 10).toString('latin1')) ? 'mov' : 'mp4';
+    else if (h.startsWith('4f676753')) ext = 'ogg';
+    else if (h.startsWith('494433') || h.startsWith('fffb') || h.startsWith('fff3')) ext = 'mp3';
+    else if (s8.startsWith('PK')) ext = 'zip';
+  }
+  return ext ? `${name}.${ext}` : name;
+}
+
+/** Одинаковые имена («изображение.jpg» ×3) нумерует, чтобы файлы не слипались. */
+export function uniqueNames(files) {
+  const seen = new Map();
+  for (const f of files) {
+    const n = seen.get(f.name) || 0;
+    seen.set(f.name, n + 1);
+    if (n) f.name = f.name.replace(/(\.[a-z0-9]{1,5})?$/i, ` (${n + 1})$1`);
+  }
+  return files;
+}
+
 function nameFromType(type) {
   return { image: 'изображение', video: 'видео', audio: 'аудио', file: 'файл' }[type] || 'вложение';
 }

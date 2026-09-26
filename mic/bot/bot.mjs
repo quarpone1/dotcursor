@@ -12,7 +12,7 @@ import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MaxApi, parseUpdate } from './max-api.mjs';
+import { MaxApi, parseUpdate, withExtension, uniqueNames } from './max-api.mjs';
 import { createSession, start, handle, summary } from './dialog.mjs';
 import { createTask, findContact, taskName, planfixConfigured,
          uploadFile, newComments, addressedToContact, createContact,
@@ -154,7 +154,9 @@ async function fetchMaxFile(file) {
   try {
     const res = await fetch(file.url, { headers: { Authorization: TOKEN }, signal: AbortSignal.timeout(120_000) });
     if (!res.ok) throw new Error(`MAX отдал ${res.status}`);
-    return Buffer.from(await res.arrayBuffer());
+    const buf = Buffer.from(await res.arrayBuffer());
+    file.name = withExtension(file.name, res.headers.get('content-type'), buf);
+    return buf;
   } catch (err) {
     console.error(`Вложение «${file.name}» не скачалось из MAX: ${err.message}`);
     return null;
@@ -200,11 +202,15 @@ async function createPlanfixTask(session) {
   const [priority] = priorityOf(session.answers.urgency);
   const contact = await resolveContact(session);
 
+  // сначала скачать всё (заодно дать файлам расширения и уникальные имена), потом загружать
   const buffers = new Map();
   const fileIds = [];
   for (const f of session.files || []) {
     const buf = await fetchMaxFile(f);
     if (buf) buffers.set(f, buf);
+  }
+  uniqueNames([...buffers.keys()]);
+  for (const [f, buf] of buffers) {
     const id = await transferFile(f, buf);
     if (id) fileIds.push(id);
   }
@@ -655,6 +661,9 @@ async function postReply(ev, mode) {
   for (const f of ev.attachments || []) {
     const buf = await fetchMaxFile(f);
     if (buf) buffers.push([f, buf]);
+  }
+  uniqueNames(buffers.map(([f]) => f));
+  for (const [f, buf] of buffers) {
     const id = await transferFile(f, buf);
     if (id) fileIds.push(id);
   }
