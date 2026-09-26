@@ -78,8 +78,53 @@ systemctl restart mis-form
 sleep 2
 systemctl is-active --quiet mis-form || { journalctl -u mis-form -n 30 --no-pager; exit 1; }
 
+# --- сертификат Минцифры для API MAX ---
+# platform-api2.max.ru подписан «Russian Trusted Root CA». Кладём его отдельным
+# файлом, а не в системное хранилище: обновление ca-certificates его не снесёт.
+# Код бота подхватывает /etc/ssl/max/russian_trusted_root_ca.pem сам.
+MAX_CA=/etc/ssl/max/russian_trusted_root_ca.pem
+MAX_CA_URL=https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt
+if grep -qE '^(MAX_BOT_TOKEN|MAX_ALERT_TOKEN)=.+' "$ENV_FILE"; then
+  say "Сертификат Минцифры для API MAX"
+  if [ -s "$MAX_CA" ]; then
+    echo "   уже на месте: $MAX_CA"
+  else
+    mkdir -p /etc/ssl/max
+    TMP_CA=$(mktemp)
+    if curl -fsS --max-time 30 -o "$TMP_CA" "$MAX_CA_URL"; then
+      # DER переводим в PEM; PEM openssl просто перепишет как есть
+      if openssl x509 -in "$TMP_CA" -out "$TMP_CA.pem" 2>/dev/null \
+         || openssl x509 -inform DER -in "$TMP_CA" -out "$TMP_CA.pem" 2>/dev/null; then
+        if openssl x509 -in "$TMP_CA.pem" -noout -subject | grep -q 'Russian Trusted Root CA'; then
+          install -m644 "$TMP_CA.pem" "$MAX_CA"
+          echo "   поставлен: $MAX_CA"
+        else
+          echo "‼  Скачанный файл — не «Russian Trusted Root CA»:"
+          openssl x509 -in "$TMP_CA.pem" -noout -subject | sed 's/^/     /'
+        fi
+      else
+        echo "‼  Скачанный файл не читается как сертификат."
+      fi
+    else
+      echo "‼  Не скачался $MAX_CA_URL"
+    fi
+    rm -f "$TMP_CA" "$TMP_CA.pem"
+    if [ ! -s "$MAX_CA" ]; then
+      echo "   Скачайте «Russian Trusted Root CA» со страницы https://www.gosuslugi.ru/crt"
+      echo "   на рабочей машине и положите на сервер:"
+      echo "     scp russian_trusted_root_ca.cer root@<сервер>:/tmp/"
+      echo "     openssl x509 -inform DER -in /tmp/russian_trusted_root_ca.cer -out $MAX_CA"
+      echo "   (если файл уже PEM — просто скопируйте его в $MAX_CA). Без него API MAX не ответит."
+    fi
+  fi
+fi
+
 # --- бот в MAX (если настроен) ---
 if grep -qE '^MAX_BOT_TOKEN=.+' "$ENV_FILE" && grep -qE '^BOT_WEBHOOK_SECRET=.+' "$ENV_FILE"; then
+  say "Проверяю бота в MAX"
+  sudo -u deploy env PAGER=cat bash -c "cd '$APP' && node --env-file=$ENV_FILE tools/check-max.mjs < /dev/null" \
+    || echo "‼  Проверка MAX не прошла — бот, скорее всего, тоже не достучится. Причина выше."
+
   say "Ставлю бота MAX"
   install -m644 "$APP/deploy/mis-bot.service" /etc/systemd/system/mis-bot.service
   systemctl daemon-reload

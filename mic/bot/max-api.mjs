@@ -1,7 +1,24 @@
 // Тонкий клиент Bot API MAX. Всё, что нужно боту: получать события,
 // отвечать, рисовать кнопки и управлять подписками на вебхук.
-const BASE = process.env.MAX_API_BASE || 'https://botapi.max.ru';
+import { trustMaxCa, explainNetError } from './max-tls.mjs';
+
+// С 19 июля 2026 API живёт только на platform-api2.max.ru — с сертификатом Минцифры.
+export const MAX_API_BASE = process.env.MAX_API_BASE || 'https://platform-api2.max.ru';
+const BASE = MAX_API_BASE;
 const DEBUG = process.env.MAX_DEBUG === '1';
+
+trustMaxCa();
+
+/** fetch, у которого сетевая ошибка объясняет, что чинить (сертификат, старый домен). */
+export async function maxFetch(url, init, base = BASE) {
+  try {
+    return await fetch(url, init);
+  } catch (e) {
+    const hint = explainNetError(e, base);
+    if (!hint) throw e;
+    throw new Error(`MAX API: ${hint}`, { cause: e });
+  }
+}
 
 export class MaxApi {
   constructor(token, base = BASE) {
@@ -13,7 +30,7 @@ export class MaxApi {
   async call(method, path, { params = {}, body } = {}) {
     const url = new URL(this.base + path);
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) url.searchParams.set(k, v);
-    const res = await fetch(url, {
+    const res = await maxFetch(url, {
       method,
       headers: {
         Authorization: this.token,
@@ -22,7 +39,7 @@ export class MaxApi {
       },
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(30_000),
-    });
+    }, this.base);
     const text = await res.text();
     let json = null;
     try { json = text ? JSON.parse(text) : null; } catch { /* не JSON */ }
@@ -51,12 +68,24 @@ export class MaxApi {
     return buttons.length ? [{ type: 'inline_keyboard', payload: { buttons } }] : [];
   }
 
-  /** Сообщение пользователю или в чат. `attachments` — готовые вложения (файлы, картинки). */
-  send({ userId, chatId, text, buttons, attachments = [] }) {
+  /**
+   * Сообщение пользователю или в чат. `attachments` — готовые вложения (файлы, картинки).
+   * `format` — 'html' или 'markdown', без него текст уходит как есть.
+   */
+  send({ userId, chatId, text, format, buttons, attachments = [] }) {
     return this.call('POST', '/messages', {
       params: { user_id: userId, chat_id: chatId },
-      body: { text, attachments: [...attachments, ...MaxApi.keyboard(buttons)] },
+      body: {
+        text,
+        ...(format ? { format } : {}),
+        attachments: [...attachments, ...MaxApi.keyboard(buttons)],
+      },
     });
+  }
+
+  /** Групповые чаты и каналы, где состоит бот. Личных диалогов здесь нет. */
+  chats({ count = 100, marker } = {}) {
+    return this.call('GET', '/chats', { params: { count, marker } });
   }
 
   /**
@@ -70,7 +99,7 @@ export class MaxApi {
     const { url } = await this.call('POST', '/uploads', { params: { type } });
     const fd = new FormData();
     fd.append('data', new Blob([buffer]), filename || 'файл');
-    const res = await fetch(url, { method: 'POST', body: fd, signal: AbortSignal.timeout(120_000) });
+    const res = await maxFetch(url, { method: 'POST', body: fd, signal: AbortSignal.timeout(120_000) }, url);
     const text = await res.text();
     if (!res.ok) throw new Error(`MAX upload ${type}: ${res.status} ${text.slice(0, 150)}`);
     const j = JSON.parse(text);

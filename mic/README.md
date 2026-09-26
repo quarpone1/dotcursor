@@ -181,6 +181,34 @@ Feature; Блокирует → Critical, Мешает → Major, Незначи
 (`ENGINEER_LOGINS`). Проверка модуля на поддельном API: `npm run youtrack:test`;
 сквозной сценарий с обеими системами — `npm run relay:test`.
 
+### Домен API и сертификат Минцифры
+
+API MAX живёт на `https://platform-api2.max.ru` — старый `platform-api.max.ru`
+отключён 19.07.2026. Новый домен подписан корневым сертификатом НУЦ Минцифры
+(«Russian Trusted Root CA»), которого нет среди встроенных в Node. Бот и все
+`npm run max:*` добавляют его к доверенным сами — из
+`/etc/ssl/max/russian_trusted_root_ca.pem` (другой путь — `MAX_CA_FILE`).
+Установщик кладёт туда сертификат, если в `/etc/mis-form.env` задан токен MAX,
+и прогоняет `npm run max:check` перед запуском бота.
+
+Если в логе `нет доверия к сертификату` — файла нет или он битый: подробности
+и ручная установка в [docs/max-bot-setup.md](docs/max-bot-setup.md), раздел 2.
+
+### Алерты в канал
+
+`npm run max:send` отправляет сообщение в канал MAX — для мониторинга и скриптов:
+
+```bash
+npm run max:send -- --chats                          # chat_id каналов, где есть бот
+npm run max:send -- "<b>Сбой</b>: не отвечает МИС"   # в MAX_ALERT_CHAT_ID, формат html
+echo "текст" | npm run max:send                      # из stdin
+```
+
+Токен — `MAX_ALERT_TOKEN` (отдельный бот мониторинга) или `MAX_BOT_TOKEN`.
+Код выхода не 0, если сообщение не ушло. Как завести бота, получить токен,
+добавить его в канал и узнать `chat_id` — [docs/max-bot-setup.md](docs/max-bot-setup.md).
+Проверка на поддельном MAX: `npm run max:test`.
+
 ### Проба без риска
 
 Если не хотите трогать боевого бота, заведите второго у @MasterBot, положите его
