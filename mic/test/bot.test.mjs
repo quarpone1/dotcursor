@@ -190,6 +190,15 @@ try {
     user: { user_id: 900, name: 'Админ' } });
   try { known = JSON.parse(await readFile(join(STATE_DIR, 'bot-chats.json'), 'utf8')); } catch { /* нет файла */ }
   check('после удаления канал помечен неактивным', known['-71234567890']?.active === false, JSON.stringify(known));
+
+  // Если bot_added пропустили — chat_id даёт и обычный пост в канале
+  await post({ update_type: 'message_created', timestamp: Date.now(), message: {
+    sender: { user_id: 900, name: 'Админ' },
+    recipient: { chat_id: -70000000005, chat_type: 'channel' },
+    body: { mid: 'ch2', seq: 1, text: 'тест', attachments: [] } } });
+  try { known = JSON.parse(await readFile(join(STATE_DIR, 'bot-chats.json'), 'utf8')); } catch { /* нет файла */ }
+  check('chat_id запомнен и по посту в канале', known['-70000000005']?.active === true, JSON.stringify(known));
+  check('и тут в канал ничего не ушло', sentToUser.length === sentBefore, String(sentToUser.length - sentBefore));
 } finally {
   bot.kill();
   maxSrv.close();

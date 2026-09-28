@@ -764,33 +764,40 @@ async function reply(target, messages) {
 /**
  * Событие из канала или группы. Заявки ведутся только в личке, поэтому здесь
  * ничего не отвечаем (иначе приветствие ушло бы прямо в канал) и в Planfix не
- * пересылаем — только запоминаем chat_id, куда бота добавили.
+ * пересылаем — только запоминаем chat_id. GET /chats в MAX отключён, так что
+ * другого способа узнать номер канала нет: годится любое событие оттуда —
+ * добавление бота или обычный пост в канале.
  */
 async function onGroupEvent(ev) {
-  if (ev.type !== 'bot_added' && ev.type !== 'bot_removed') return;
-  if (!ev.chatId) return;
+  const raw = JSON.stringify(ev.raw || {}).slice(0, 400);
+  if (!ev.chatId) {
+    console.log(`Событие ${ev.type} из канала/группы без chat_id: ${raw}`);
+    return;
+  }
   let chats = {};
   try { chats = JSON.parse(await readFile(CHATS_FILE, 'utf8')); } catch { /* ещё не было */ }
-  const was = chats[ev.chatId] || {};
-  let title = was.title || null;
-  if (ev.type === 'bot_added') {
-    title = (await api.chat(ev.chatId).catch(() => null))?.title || title;
-  }
+  const was = chats[ev.chatId];
+  const removed = ev.type === 'bot_removed';
+  // Про каждое событие не пишем: пост в канале — не повод для записи в журнал
+  if (was && !removed && ev.type !== 'bot_added' && was.active !== false) return;
+
+  let title = was?.title || null;
+  if (!removed) title = (await api.chat(ev.chatId).catch(() => null))?.title || title;
   chats[ev.chatId] = {
     ...was,
     title,
-    type: ev.chatType || was.type || null,
-    by: ev.userName || was.by || null,
-    [ev.type === 'bot_added' ? 'addedAt' : 'removedAt']: new Date().toISOString(),
-    active: ev.type === 'bot_added',
+    type: ev.chatType || was?.type || null,
+    by: ev.userName || was?.by || null,
+    [removed ? 'removedAt' : 'addedAt']: new Date().toISOString(),
+    active: !removed,
   };
   try {
     await mkdir(STATE_DIR, { recursive: true });
     await writeFile(CHATS_FILE, JSON.stringify(chats, null, 1), 'utf8');
   } catch (err) { console.error('Не сохранил список каналов:', err.message); }
-  console.log(ev.type === 'bot_added'
-    ? `Бота добавили в «${title || '?'}»: chat_id ${ev.chatId}`
-    : `Бота убрали из «${title || '?'}»: chat_id ${ev.chatId}`);
+  if (removed) console.log(`Бота убрали из «${title || '?'}»: chat_id ${ev.chatId}`);
+  else if (ev.type === 'bot_added') console.log(`Бота добавили в «${title || '?'}»: chat_id ${ev.chatId}`);
+  else console.log(`Бот видит «${title || '?'}» (событие ${ev.type}): chat_id ${ev.chatId}`);
 }
 
 export async function dispatch(update) {
