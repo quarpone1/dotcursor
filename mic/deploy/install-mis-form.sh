@@ -142,6 +142,21 @@ else
   echo "· Бот MAX пропущен: в $ENV_FILE нет MAX_BOT_TOKEN и BOT_WEBHOOK_SECRET."
 fi
 
+# --- сторож: тревоги в канал MAX (если задан канал) ---
+if grep -qE '^MAX_ALERT_CHAT_ID=.+' "$ENV_FILE"; then
+  say "Ставлю сторожа (тревоги в канал MAX раз в минуту)"
+  install -m644 "$APP/deploy/mis-watchdog.service" /etc/systemd/system/mis-watchdog.service
+  install -m644 "$APP/deploy/mis-watchdog.timer" /etc/systemd/system/mis-watchdog.timer
+  systemctl daemon-reload
+  systemctl enable --now mis-watchdog.timer >/dev/null
+  # Первый прогон сразу, чтобы увидеть результат здесь, а не через минуту
+  systemctl start mis-watchdog.service || true
+  journalctl -u mis-watchdog -n 10 --no-pager -o cat | sed 's/^/     /'
+else
+  echo
+  echo "· Сторож пропущен: в $ENV_FILE нет MAX_ALERT_CHAT_ID (узнать: npm run max:send -- --chats)."
+fi
+
 # --- nginx ---
 say "Настраиваю nginx"
 mkdir -p /etc/nginx/snippets

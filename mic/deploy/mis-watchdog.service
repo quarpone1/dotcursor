@@ -1,0 +1,22 @@
+[Unit]
+Description=Сторож формы и бота заявок МИС — тревоги в канал MAX
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/var/www/mis-form
+EnvironmentFile=/etc/mis-form.env
+Environment=NODE_ENV=production
+Environment=BOT_STATE_DIR=/var/lib/mis-form
+# Код 1 значит «что-то не работает» — это результат проверки, а не сбой сторожа
+SuccessExitStatus=1
+ExecStart=/usr/bin/node tools/watchdog.mjs
+TimeoutStartSec=90
+
+StateDirectory=mis-form
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mis-form
