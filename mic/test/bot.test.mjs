@@ -7,7 +7,7 @@ import { createServer } from 'node:http';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_PORT = 3491, PLANFIX_PORT = 3492, BOT_PORT = 3493;
@@ -38,6 +38,7 @@ const maxSrv = createServer(async (req, res) => {
   if (url.pathname === '/subscriptions') return res.end(JSON.stringify({ subscriptions: [] }));
   if (url.pathname === '/messages') { sentToUser.push(body); return res.end(JSON.stringify({ message: {} })); }
   if (url.pathname === '/answers') return res.end(JSON.stringify({ success: true }));
+  if (url.pathname === '/chats/-71234567890') return res.end(JSON.stringify({ chat_id: -71234567890, type: 'channel', title: 'Алерты МИЦ' }));
   res.end('{}');
 }).listen(MAX_PORT, '127.0.0.1');
 
@@ -168,6 +169,27 @@ try {
   await post(msg('заявка'));
   check('новый диалог начался', /Что оформляем/i.test(lastText()));
   check('и снова ничего не утекает', forwarded.length === before2, String(forwarded.length - before2));
+
+  console.log('\n7. Бота добавили в канал алертов');
+  const sentBefore = sentToUser.length, fwdBefore = forwarded.length;
+  await post({ update_type: 'bot_added', timestamp: Date.now(), chat_id: -71234567890, is_channel: true,
+    user: { user_id: 900, name: 'Админ' } });
+  // Сообщение, опубликованное в канале, — тоже событие для бота
+  await post({ update_type: 'message_created', timestamp: Date.now(), message: {
+    sender: { user_id: 900, name: 'Админ' },
+    recipient: { chat_id: -71234567890, chat_type: 'channel' },
+    body: { mid: 'ch1', seq: 1, text: 'заявка', attachments: [] } } });
+  check('в канал бот ничего не пишет', sentToUser.length === sentBefore,
+    JSON.stringify(sentToUser.slice(sentBefore)).slice(0, 120));
+  check('в Planfix события канала не уходят', forwarded.length === fwdBefore, String(forwarded.length - fwdBefore));
+  let known = {};
+  try { known = JSON.parse(await readFile(join(STATE_DIR, 'bot-chats.json'), 'utf8')); } catch { /* нет файла */ }
+  check('chat_id канала запомнен вместе с названием', known['-71234567890']?.title === 'Алерты МИЦ' &&
+    known['-71234567890']?.active === true, JSON.stringify(known));
+  await post({ update_type: 'bot_removed', timestamp: Date.now(), chat_id: -71234567890, is_channel: true,
+    user: { user_id: 900, name: 'Админ' } });
+  try { known = JSON.parse(await readFile(join(STATE_DIR, 'bot-chats.json'), 'utf8')); } catch { /* нет файла */ }
+  check('после удаления канал помечен неактивным', known['-71234567890']?.active === false, JSON.stringify(known));
 } finally {
   bot.kill();
   maxSrv.close();

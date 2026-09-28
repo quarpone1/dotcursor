@@ -18,6 +18,7 @@ const check = (name, cond, extra = '') => {
 };
 
 const requests = [];
+const world = { chatsGone: false };
 const readBody = async (req) => {
   const chunks = [];
   for await (const c of req) chunks.push(c);
@@ -32,7 +33,13 @@ const maxSrv = createServer(async (req, res) => {
   requests.push({ method: req.method, path: url.pathname, query: Object.fromEntries(url.searchParams), auth: req.headers.authorization, body });
   const json = (code, obj) => res.writeHead(code, { 'Content-Type': 'application/json' }).end(JSON.stringify(obj));
   if (req.headers.authorization !== 'alert-token') return json(401, { code: 'verify.token', message: 'Invalid access_token' });
-  if (url.pathname === '/chats') return json(200, { chats: [{ chat_id: -71234567890, type: 'channel', title: 'Мониторинг — алерты' }] });
+  if (url.pathname === '/chats') {
+    // Как сейчас в MAX: метод отключён
+    if (world.chatsGone) return json(404, { code: 'method.not.found', message: 'Path /chats is not recognized' });
+    return json(200, { chats: [{ chat_id: -71234567890, type: 'channel', title: 'Мониторинг — алерты' }] });
+  }
+  if (url.pathname === '/chats/-71234567890') return json(200, { chat_id: -71234567890, type: 'channel', title: 'Алерты МИЦ' });
+  if (url.pathname.startsWith('/chats/')) return json(404, { code: 'chat.not.found' });
   if (url.pathname === '/messages') {
     if (url.searchParams.get('chat_id') !== '-71234567890') return json(404, { code: 'chat.not.found', message: 'Chat not found' });
     return json(200, { message: { body: { text: body.text } } });
@@ -109,6 +116,26 @@ console.log('Поиск chat_id');
 {
   const r = await run(['--chats']);
   check('--chats печатает id, тип и название канала', r.code === 0 && /-71234567890\tchannel\tМониторинг — алерты/.test(r.out), r.out);
+}
+
+console.log('GET /chats отключён — список из событий bot_added');
+{
+  world.chatsGone = true;
+  const stateDir = await mkdtemp(join(tmpdir(), 'max-chats-'));
+  const env = { BOT_STATE_DIR: stateDir };
+  const empty = await run(['--chats'], { env });
+  check('пока бот ничего не видел — объясняет, как получить chat_id', empty.code === 0 && /добавьте снова/.test(empty.out), empty.out);
+  await writeFile(join(stateDir, 'bot-chats.json'), JSON.stringify({
+    '-71234567890': { title: 'Алерты МИЦ', type: 'channel', active: true },
+    '-70000000001': { title: 'Старый канал', type: 'channel', active: true },
+    '-70000000002': { title: 'Удалённый', type: 'channel', active: false },
+  }));
+  const r = await run(['--chats'], { env });
+  check('печатает запомненный канал с названием из MAX', /-71234567890\tchannel\tАлерты МИЦ\n/.test(r.out), r.out);
+  check('канал, который MAX не отдаёт, помечен', /-70000000001.*бота убрали/.test(r.out), r.out);
+  check('канал, откуда бота убрали, не показан', !/-70000000002/.test(r.out), r.out);
+  await rm(stateDir, { recursive: true, force: true });
+  world.chatsGone = false;
 }
 
 maxSrv.close();

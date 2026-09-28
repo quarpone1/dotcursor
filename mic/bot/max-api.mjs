@@ -83,9 +83,18 @@ export class MaxApi {
     });
   }
 
-  /** Групповые чаты и каналы, где состоит бот. Личных диалогов здесь нет. */
+  /**
+   * Групповые чаты и каналы, где состоит бот. С июня 2026 MAX этот метод
+   * отключил (404 method.not.found) — chat_id приходит только в событии
+   * bot_added, его запоминает бот заявок (см. bot-chats.json).
+   */
   chats({ count = 100, marker } = {}) {
     return this.call('GET', '/chats', { params: { count, marker } });
+  }
+
+  /** Сведения о канале или групповом чате по chat_id — этот метод жив. */
+  chat(chatId) {
+    return this.call('GET', `/chats/${encodeURIComponent(chatId)}`);
   }
 
   /**
@@ -132,7 +141,24 @@ export class MaxApi {
    Формы полей в разных типах событий отличаются, поэтому достаём
    их терпимо к вариациям: лучше понять событие, чем упасть на поле. */
 
+// События, которые бывают только в групповых чатах и каналах
+const GROUP_EVENTS = new Set(['bot_added', 'bot_removed', 'user_added', 'user_removed', 'chat_title_changed']);
+
+/**
+ * Разбирает событие. `group: true` — оно из канала или группового чата, а не
+ * из личного диалога с ботом: заявки там не ведутся.
+ */
 export function parseUpdate(u) {
+  const ev = parseUpdateKind(u);
+  const type = u?.update_type || u?.updateType;
+  const chatType = u?.message?.recipient?.chat_type ?? (u?.is_channel ? 'channel' : null);
+  ev.type = type;
+  ev.chatType = chatType;
+  ev.group = GROUP_EVENTS.has(type) || Boolean(chatType && chatType !== 'dialog');
+  return ev;
+}
+
+function parseUpdateKind(u) {
   const type = u?.update_type || u?.updateType;
   const msg = u?.message;
 

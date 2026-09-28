@@ -48,6 +48,9 @@ const RELAY_DAYS = Number(process.env.PLANFIX_RELAY_DAYS || 14);
 // Сколько дней задача остаётся в «Моих заявках» и принимает ответы человека
 const TICKETS_KEEP_DAYS = Number(process.env.TICKETS_KEEP_DAYS || 180);
 const REPLIES_FILE = join(STATE_DIR, 'bot-replies.json');
+// Каналы и группы, куда добавили бота. GET /chats в MAX отключён, и узнать
+// chat_id канала можно только из события bot_added — поэтому запоминаем сами.
+const CHATS_FILE = join(STATE_DIR, 'bot-chats.json');
 // Адрес вебхука публичный, поэтому в путь зашиваем секрет: чужой POST не пройдёт.
 const SECRET = process.env.BOT_WEBHOOK_SECRET || '';
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
@@ -758,9 +761,42 @@ async function reply(target, messages) {
   }
 }
 
+/**
+ * Событие из канала или группы. Заявки ведутся только в личке, поэтому здесь
+ * ничего не отвечаем (иначе приветствие ушло бы прямо в канал) и в Planfix не
+ * пересылаем — только запоминаем chat_id, куда бота добавили.
+ */
+async function onGroupEvent(ev) {
+  if (ev.type !== 'bot_added' && ev.type !== 'bot_removed') return;
+  if (!ev.chatId) return;
+  let chats = {};
+  try { chats = JSON.parse(await readFile(CHATS_FILE, 'utf8')); } catch { /* ещё не было */ }
+  const was = chats[ev.chatId] || {};
+  let title = was.title || null;
+  if (ev.type === 'bot_added') {
+    title = (await api.chat(ev.chatId).catch(() => null))?.title || title;
+  }
+  chats[ev.chatId] = {
+    ...was,
+    title,
+    type: ev.chatType || was.type || null,
+    by: ev.userName || was.by || null,
+    [ev.type === 'bot_added' ? 'addedAt' : 'removedAt']: new Date().toISOString(),
+    active: ev.type === 'bot_added',
+  };
+  try {
+    await mkdir(STATE_DIR, { recursive: true });
+    await writeFile(CHATS_FILE, JSON.stringify(chats, null, 1), 'utf8');
+  } catch (err) { console.error('Не сохранил список каналов:', err.message); }
+  console.log(ev.type === 'bot_added'
+    ? `Бота добавили в «${title || '?'}»: chat_id ${ev.chatId}`
+    : `Бота убрали из «${title || '?'}»: chat_id ${ev.chatId}`);
+}
+
 export async function dispatch(update) {
   const ev = parseUpdate(update);
   if (!ev.userId && !ev.chatId) return;
+  if (ev.group) return void (await onGroupEvent(ev));
 
   const session = sessions.get(ev.userId);
 
