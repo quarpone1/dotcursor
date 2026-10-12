@@ -6,12 +6,12 @@ import Logo from "./Logo";
 import MagneticButton from "./MagneticButton";
 
 const links = [
-  { label: "Студия", href: "#about" },
-  { label: "Услуги", href: "#services" },
-  { label: "Работы", href: "#work" },
-  { label: "Подход", href: "#stats" },
-  { label: "Клиенты", href: "#clients" },
-  { label: "Контакт", href: "#contact" },
+  { label: "Студия", href: "/#about" },
+  { label: "Услуги", href: "/#services" },
+  { label: "Работы", href: "/#work" },
+  { label: "Подход", href: "/#stats" },
+  { label: "Клиенты", href: "/#clients" },
+  { label: "Контакт", href: "/#contact" },
 ];
 
 type Lenis = { stop: () => void; start: () => void };
