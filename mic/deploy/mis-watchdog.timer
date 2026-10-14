@@ -1,0 +1,10 @@
+[Unit]
+Description=Сторож формы и бота заявок МИС — раз в минуту
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

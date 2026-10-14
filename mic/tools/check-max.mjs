@@ -1,7 +1,8 @@
 // Разведка перед написанием бота: кто мы в MAX и как к боту подключён Planfix.
 // Запуск: npm run max:check
+import { MAX_API_BASE as BASE, maxFetch } from '../bot/max-api.mjs';
+
 const TOKEN = process.env.MAX_BOT_TOKEN;
-const BASE = process.env.MAX_API_BASE || 'https://botapi.max.ru';
 
 if (!TOKEN) {
   console.error('✗ MAX_BOT_TOKEN не задан.');
@@ -13,7 +14,7 @@ if (!TOKEN) {
 async function max(path, params = {}) {
   const url = new URL(BASE + path);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const res = await fetch(url, { headers: { Authorization: TOKEN, Accept: 'application/json' } });
+  const res = await maxFetch(url, { headers: { Authorization: TOKEN, Accept: 'application/json' } });
   const text = await res.text();
   let json = null;
   try { json = text ? JSON.parse(text) : null; } catch { /* не JSON */ }
@@ -21,15 +22,30 @@ async function max(path, params = {}) {
 }
 
 /* 1. Кто бот */
-const me = await max('/me');
+let me;
+try {
+  me = await max('/me');
+} catch (e) {
+  console.error(`✗ ${BASE} недоступен: ${e.message}`);
+  process.exit(1);
+}
 if (!me.ok) {
   console.error(`✗ Токен не принят (HTTP ${me.status}): ${me.text.slice(0, 200)}`);
+  if (me.status === 401) console.error('  Токен передаётся как есть, без «Bearer». Если он верный — перевыпустите в карточке бота.');
   process.exit(1);
 }
 console.log(`✓ Бот: ${me.json.name || '?'} @${me.json.username || '?'} (id ${me.json.user_id})`);
 if (me.json.description) console.log(`  описание: ${me.json.description}`);
 
-/* 2. Кто слушает события — это и решает архитектуру */
+/* 2. Где бот состоит: отсюда берётся chat_id канала для алертов */
+const chats = await max('/chats', { count: 100 });
+if (chats.ok) {
+  const list = chats.json?.chats || [];
+  console.log(`\nГрупповые чаты и каналы: ${list.length}`);
+  for (const c of list) console.log(`  · ${c.chat_id}  ${c.type || '?'}  ${c.title || ''}`);
+}
+
+/* 3. Кто слушает события — это и решает архитектуру */
 const subs = await max('/subscriptions');
 if (!subs.ok) {
   console.log(`\n? Не удалось прочитать подписки (HTTP ${subs.status}): ${subs.text.slice(0, 200)}`);
