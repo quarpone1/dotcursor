@@ -93,7 +93,10 @@ const ytSrv = createServer(async (req, res) => {
   const b = await body(req);
   const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
   if (url.pathname === '/api/files/yt-1') { res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(Buffer.alloc(1024, 3)); }
-  if (url.pathname === '/api/admin/projects') return send(200, [{ id: '59-247', shortName: 'MIC', name: 'Сопровождение МИЦ' }]);
+  if (url.pathname === '/api/admin/projects') return send(200, [{ id: '59-247', shortName: 'MIC', name: 'Сопровождение МИЦ', team: { id: '581-1', name: 'Сопровождение МИЦ Team' } }]);
+  if (url.pathname === '/api/groups') return send(200, [{ id: '20-1', name: 'Клиенты Тюмень (Медгород)' }, { id: '20-2', name: 'Клиенты Тюмень (Нефтяник стационар)' }, { id: '581-1', name: 'Сопровождение МИЦ Team' }]);
+  if (url.pathname === '/api/admin/projects/59-247/customFields') return send(200, [{ field: { name: 'Месяц создания' }, bundle: { id: '70-1' } }]);
+  if (url.pathname === '/api/admin/customFieldSettings/bundles/version/70-1/values') return send(200, req.method === 'GET' ? [] : { id: 'v1', name: b.name });
   if (url.pathname === '/api/issues' && req.method === 'POST') {
     if (ytDown) return send(503, { error: 'unavailable' });
     ytIssues.push(b);
@@ -190,14 +193,20 @@ try {
   await sleep(400);
 
   check('задача создана через API', taskCreated !== null);
+  check('задача Planfix названа номером YouTrack', /^\[MIC-1\]/.test(taskCreated?.name || ''), taskCreated?.name);
+  check('в описании Planfix — короткая ссылка на YouTrack', /YouTrack: http:\/\/127\.0\.0\.1:3495\/issue\/MIC-1(<br>|$)/.test(taskCreated?.description || ''), (taskCreated?.description || '').slice(0, 160));
+  check('человеку пришёл номер и ссылка', sentToUser.some((m) => /Заявка MIC-1 принята\.\nhttp:\/\/127\.0\.0\.1:3495\/issue\/MIC-1/.test(m.text || '')), JSON.stringify(sentToUser.slice(-2).map((m) => m.text)));
   check('заказчик — найденный контакт', taskCreated?.counterparty?.id === 'contact:971',
     JSON.stringify(taskCreated?.counterparty));
   check('задача легла в проект', taskCreated?.project?.id === 16521, JSON.stringify(taskCreated?.project));
 
   console.log('\n1а. Дубль заявки в YouTrack');
   check('задача создана и в YouTrack', ytIssues.length === 1, String(ytIssues.length));
-  const ytf = Object.fromEntries((ytIssues[0]?.customFields || []).map((f) => [f.name, f.value?.name ?? f.value?.login ?? f.value]));
-  check('в проекте MIC, с тем же номером заявки', ytIssues[0]?.project?.id === '59-247' && /^ТП-/.test(ytf['Номер заявки'] || ''), JSON.stringify(ytf));
+  const ytVal = (f) => Array.isArray(f.value) ? f.value.map((v) => v.name).join('|') : (f.value?.name ?? f.value?.login ?? f.value);
+  const ytf = Object.fromEntries((ytIssues[0]?.customFields || []).map((f) => [f.name, ytVal(f)]));
+  check('в проекте MIC, без «Номера заявки» и без номера в заголовке', ytIssues[0]?.project?.id === '59-247' && !('Номер заявки' in ytf) && !/^\[/.test(ytIssues[0]?.summary || ''), JSON.stringify(ytf) + ' ' + ytIssues[0]?.summary);
+  check('Объект, Где выявлено и Месяц создания', ytf['Объект'] === 'МедГород' && ytf['Где выявлено'] === 'МедГород' && /^\d{4}\.\d\d$/.test(ytf['Месяц создания'] || ''), JSON.stringify(ytf));
+  check('видимость: группа Медгорода + команда MIC', JSON.stringify(ytIssues[0]?.visibility?.permittedGroups) === '[{"id":"20-1"},{"id":"581-1"}]', JSON.stringify(ytIssues[0]?.visibility));
   check('клиника и исполнитель по клинике (МедГород → deravchuk)', ytf['Клиника'] === 'МедГород' && ytf['Разработчик'] === 'deravchuk', JSON.stringify(ytf));
   check('тип и приоритет', ytf.Type === 'Bug' && ytf['Тип заявки'] === 'Ошибка' && ytf.Priority === 'Critical', JSON.stringify(ytf));
   check('описание — та же карточка заявки', /Не печатается чек/.test(ytIssues[0]?.description || ''));
@@ -226,7 +235,7 @@ try {
   await sleep(1600);
   const relayed = lastText();
   check('ответ доставлен в MAX', /Уточните номер кассы/.test(relayed), relayed.slice(0, 80));
-  check('видно, по какой заявке', /Ответ по заявке ТП-/.test(relayed), relayed.slice(0, 40));
+  check('видно, по какой заявке (номер YouTrack)', /Ответ по заявке MIC-1\n/.test(relayed), relayed.slice(0, 40));
   check('указан автор', /Фиголь Роман/.test(relayed), relayed.slice(0, 60));
   check('разметка убрана', !/<br>/.test(relayed), relayed);
 
@@ -313,7 +322,7 @@ try {
 
   console.log('\n5. Человек отвечает по кнопке');
   await post(btn('reply:18001'));
-  check('режим ответа включён', /Пишу в заявку ТП-/.test(lastText()), lastText().slice(0, 40));
+  check('режим ответа включён', /Пишу в заявку MIC-1/.test(lastText()), lastText().slice(0, 40));
   await post(msg('Касса номер 3, у окна'));
   check('текст ушёл комментарием в задачу', posted.length === 1 && /Касса номер 3/.test(posted[0].description),
     JSON.stringify(posted[0]).slice(0, 120));
@@ -396,13 +405,15 @@ try {
   await post(btn2('ok:send'));
   await sleep(300);
   check('во время паузы задача не создавалась', tasksCreated === createdBefore, String(tasksCreated - createdBefore));
-  check('человеку сказано, что заявка сохранена и подождёт',
-    sentToUser.some((m) => /Заявка принята и сохранена/.test(m.text || '')));
+  check('человеку сказано, что заявка сохранена и подождёт, но номер YouTrack уже есть',
+    sentToUser.some((m) => /Заявка MIC-2 принята\.\n.*\n\nЗаявка сохранена\. Система задач Planfix/.test(m.text || '')), JSON.stringify(sentToUser.slice(-3).map((m) => m.text)));
+  check('задача в YouTrack создана, не дожидаясь Planfix', ytIssues.length === 2, String(ytIssues.length));
 
   rateLimited = false;
   await sleep(3200);   // сброс через 2 с + следующий тик
   check('после сброса заявка из очереди создана', tasksCreated === createdBefore + 1, String(tasksCreated - createdBefore));
-  check('это доработка с полями из очереди', taskCreated?.name?.includes('Доработка') && /повторно/.test(taskCreated?.name || ''), taskCreated?.name);
+  check('это доработка с полями из очереди, с номером YouTrack', taskCreated?.name?.includes('Доработка') && /повторно/.test(taskCreated?.name || '') && /^\[MIC-2\]/.test(taskCreated?.name || ''), taskCreated?.name);
+  check('второй задачи в YouTrack при разборе очереди не создано', ytIssues.length === 2, String(ytIssues.length));
   check('человек уведомлён, что заявка передана',
     sentToUser.some((m) => /передана в поддержку/.test(m.text || '')));
 
@@ -418,7 +429,7 @@ try {
   const fromYt = sentToUser.slice(ytBefore);
   const ytReply = fromYt.find((m) => /Проверьте драйвер/.test(m.text || ''));
   check('ответ из YouTrack доставлен в MAX', Boolean(ytReply), JSON.stringify(fromYt.map((m) => m.text)));
-  check('видно, что это YouTrack и по какой заявке', /Ответ по заявке ТП-.*\(YouTrack MIC-1\)/.test(ytReply?.text || ''), ytReply?.text?.slice(0, 60));
+  check('заголовок — просто номер, без повтора «(YouTrack …)»', /^Ответ по заявке MIC-1\n/.test(ytReply?.text || ''), ytReply?.text?.slice(0, 60));
   check('указан автор', /Касимов Дмитрий/.test(ytReply?.text || ''));
   check('кнопка «Ответить» под ответом', /reply:18001/.test(JSON.stringify(ytReply?.attachments || [])));
   check('свой комментарий (из MAX) эхом не вернулся', !fromYt.some((m) => /Касса номер 3/.test(m.text || '')));
@@ -452,12 +463,13 @@ try {
   await sleep(400);
   check('задача в Planfix создана несмотря на сбой YouTrack', tasksCreated === pfBefore10 + 1, String(tasksCreated - pfBefore10));
   check('в YouTrack пока нет', ytIssues.length === ytBefore10);
-  check('человеку сказано, что заявка передана', sentToUser.some((m) => /передана в поддержку/.test(m.text || '')));
+  check('человеку выдан временный номер ТП-…', sentToUser.some((m) => /Заявка ТП-\d{4}-\d+ принята\./.test(m.text || '')), JSON.stringify(sentToUser.slice(-2).map((m) => m.text)));
   check('в логе — повторю позже', logs.join('').includes('повторю позже'));
   ytDown = false;
   await sleep(1800);
   check('после восстановления дубль создан', ytIssues.length === ytBefore10 + 1, String(ytIssues.length - ytBefore10));
-  const ytf10 = Object.fromEntries((ytIssues.at(-1)?.customFields || []).map((f) => [f.name, f.value?.name ?? f.value?.login ?? f.value]));
+  check('человеку сообщён новый номер и ссылка', sentToUser.some((m) => /Заявке ТП-\d{4}-\d+ присвоен номер MIC-3\.\nhttp/.test(m.text || '')), JSON.stringify(sentToUser.slice(-2).map((m) => m.text)));
+  const ytf10 = Object.fromEntries((ytIssues.at(-1)?.customFields || []).map((f) => [f.name, ytVal(f)]));
   check('с полями из снимка заявки (Нефтяник стационар → kasimov_dv, Major)', ytf10['Клиника'] === 'Нефтяник стационар' && ytf10['Разработчик'] === 'kasimov_dv' && ytf10.Priority === 'Major', JSON.stringify(ytf10));
 } finally {
   bot.kill();

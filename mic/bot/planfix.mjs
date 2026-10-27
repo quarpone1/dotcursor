@@ -389,5 +389,5 @@ function fieldNameById(id) {
 export function taskName({ ticketNo, priority, fields }) {
   const short = String(fields.title || '').replace(/\s+/g, ' ').slice(0, 90);
   const kind = fields.kind === 'Доработка' ? 'Доработка · ' : '';
-  return `[${ticketNo}] ${kind}${priority} · ${fields.clinic} / ${fields.module} — ${short}`;
+  return `${ticketNo ? `[${ticketNo}] ` : ''}${kind}${priority} · ${fields.clinic} / ${fields.module} — ${short}`;
 }

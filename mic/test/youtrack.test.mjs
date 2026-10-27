@@ -21,7 +21,9 @@ const comments = [];
 const uploads = [];
 let rejectField = null;         // имя поля, которое «не в проекте»
 let rejectAssignee = false;
+let rejectVisibility = false;
 const queries = [];
+const monthsAdded = [];
 const COMMENTS = [
   { id: 'c1', text: '💬 Из MAX от Иванов:\nмой вопрос', created: 1000, deleted: false, author: { login: 'figol_rs', fullName: 'Фиголь Роман' } },
   { id: 'c2', text: 'Смотрю логи', created: 2000, deleted: false, author: { login: 'kasimov_dv', fullName: 'Касимов Дмитрий' }, attachments: [{ id: 'a1', name: 'лог.txt', url: '/api/files/a1' }] },
@@ -37,11 +39,16 @@ const srv = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
 
-  if (url.pathname === '/api/admin/projects') return send(200, [{ id: '59-247', shortName: 'MIC', name: 'Сопровождение МИЦ' }]);
+  if (url.pathname === '/api/admin/projects') return send(200, [{ id: '59-247', shortName: 'MIC', name: 'Сопровождение МИЦ', team: { id: '581-1', name: 'Сопровождение МИЦ Team' } }]);
+  if (url.pathname === '/api/groups') return send(200, [{ id: '20-1', name: 'Клиенты Тюмень (ГП-1)' }, { id: '20-2', name: 'Клиенты Тюмень (Медгород)' }, { id: '581-1', name: 'Сопровождение МИЦ Team' }]);
+  if (url.pathname === '/api/admin/projects/59-247/customFields') return send(200, [{ field: { name: 'Месяц создания' }, bundle: { id: '70-1' } }]);
+  if (url.pathname === '/api/admin/customFieldSettings/bundles/version/70-1/values' && req.method === 'GET') return send(200, [{ name: '2026.09' }, { name: '2026.10' }]);
+  if (url.pathname === '/api/admin/customFieldSettings/bundles/version/70-1/values' && req.method === 'POST') { monthsAdded.push(body.name); return send(200, { id: 'v9', name: body.name }); }
   if (url.pathname === '/api/issues' && req.method === 'POST') {
     const names = (body.customFields || []).map((f) => f.name);
     if (rejectField && names.includes(rejectField)) return send(500, { error: 'server_error', error_description: `incompatible-issue-custom-field-name-${rejectField}` });
     if (rejectAssignee && names.includes('Разработчик')) return send(400, { error: '', error_description: 'Недопустимое значение' });
+    if (rejectVisibility && body.visibility) return send(403, { error: '', error_description: 'You have no permission to set visibility group' });
     const noVal = (body.customFields || []).find((f) => f.value?.name === 'Срочно-срочно');
     if (noVal) return send(400, { error: '', error_description: `Сущность типа ${noVal.value.name} с указанным именем ({1}) не найдена` });
     created.push(body);
@@ -68,34 +75,49 @@ try {
 
   console.log('\n2. Задача со всеми полями');
   const fields = { kind: 'Ошибка', clinic: 'ГП-1', module: 'Касса', role: 'Кассир', patient: 'А-1, КБП 3', urgency: 'Блокирует работу (полный отказ)', contact: '+7 900' };
-  const iss = await yt.createIssue({ summary: 'тест', description: 'карточка', fields, ticketNo: 'ТП-2026-1' });
+  const iss = await yt.createIssue({ summary: 'тест', description: 'карточка', fields, createdAt: Date.UTC(2026, 9, 14, 12) });
   check('возвращает id и читаемый номер', iss.id === '2-1' && iss.key === 'MIC-1', JSON.stringify(iss));
-  const cf = Object.fromEntries(created[0].customFields.map((f) => [f.name, f.value?.name ?? f.value?.login ?? f.value]));
+  const val = (f) => Array.isArray(f.value) ? f.value.map((v) => v.name).join('|') : (f.value?.name ?? f.value?.login ?? f.value);
+  const cf = Object.fromEntries(created[0].customFields.map((f) => [f.name, val(f)]));
   check('клиника, тип, срочность — списками', cf['Клиника'] === 'ГП-1' && cf['Тип заявки'] === 'Ошибка' && cf['Срочность'] === 'Блокирует работу (полный отказ)', JSON.stringify(cf));
   check('Type и Priority по соответствию', cf.Type === 'Bug' && cf.Priority === 'Critical', `${cf.Type}/${cf.Priority}`);
-  check('строковые поля', cf['Номер заявки'] === 'ТП-2026-1' && cf['Модуль'] === 'Касса' && cf['Роль'] === 'Кассир' && cf['Пациент'] === 'А-1, КБП 3' && cf['Источник'] === 'бот MAX');
+  check('строковые поля, «Номер заявки» больше не заполняется', !('Номер заявки' in cf) && cf['Модуль'] === 'Касса' && cf['Роль'] === 'Кассир' && cf['Пациент'] === 'А-1, КБП 3' && cf['Источник'] === 'бот MAX', JSON.stringify(cf));
+  check('Объект и Где выявлено по клинике (ГП-1 → ГП1)', cf['Объект'] === 'ГП1' && cf['Где выявлено'] === 'ГП1', JSON.stringify(cf));
+  check('Объект — списком (MultiEnum)', created[0].customFields.find((f) => f.name === 'Объект')?.$type === 'MultiEnumIssueCustomField');
+  check('Месяц создания = месяц оформления', cf['Месяц создания'] === '2026.10', cf['Месяц создания']);
+  check('видимость: группа клиники + команда', created[0].visibility?.$type === 'LimitedVisibility' && JSON.stringify(created[0].visibility.permittedGroups) === '[{"id":"20-1"},{"id":"581-1"}]', JSON.stringify(created[0].visibility));
   check('исполнитель по клинике — Щербаков', cf['Разработчик'] === 'shcherbakov_eg', cf['Разработчик']);
   check('проект подставлен', created[0].project.id === '59-247');
 
-  await yt.createIssue({ summary: 'д', description: 'x', fields: { kind: 'Доработка', clinic: 'МедГород', urgency: 'Незначительно / пожелание' }, ticketNo: 'ТП-2026-2' });
-  const cf2 = Object.fromEntries(created[1].customFields.map((f) => [f.name, f.value?.name ?? f.value?.login ?? f.value]));
-  check('доработка → Feature/Minor, МедГород → Деравчук', cf2.Type === 'Feature' && cf2.Priority === 'Minor' && cf2['Разработчик'] === 'deravchuk', JSON.stringify(cf2));
-  check('незнакомая клиника — без исполнителя', !(await (async () => { await yt.createIssue({ summary: 'x', description: 'x', fields: { clinic: 'Нет такой' } }); return created[2].customFields.some((f) => f.name === 'Разработчик'); })()));
+  await yt.createIssue({ summary: 'д', description: 'x', fields: { kind: 'Доработка', clinic: 'МедГород', urgency: 'Незначительно / пожелание' }, createdAt: Date.UTC(2027, 0, 5, 12) });
+  const cf2 = Object.fromEntries(created[1].customFields.map((f) => [f.name, val(f)]));
+  check('доработка → Task («Задание»)/Minor, МедГород → Деравчук', cf2.Type === 'Task' && cf2.Priority === 'Minor' && cf2['Разработчик'] === 'deravchuk', JSON.stringify(cf2));
+  check('у доработки «Где выявлено» не ставится, «Объект» есть', !('Где выявлено' in cf2) && cf2['Объект'] === 'МедГород', JSON.stringify(cf2));
+  check('новый месяц добавлен в список и поставлен', monthsAdded.includes('2027.01') && cf2['Месяц создания'] === '2027.01', JSON.stringify(monthsAdded));
+  await yt.createIssue({ summary: 'x', description: 'x', fields: { kind: 'Ошибка', clinic: 'ТГМУ' } });
+  check('нет группы клиники — задача без ограничения видимости', !created.at(-1).visibility, JSON.stringify(created.at(-1).visibility));
+  check('но «Объект» всё равно подставлен (ТГМУ → ТюмГМУ)', val(created.at(-1).customFields.find((f) => f.name === 'Объект')) === 'ТюмГМУ');
+  check('незнакомая клиника — без исполнителя', !(await (async () => { await yt.createIssue({ summary: 'x', description: 'x', fields: { clinic: 'Нет такой' } }); return created.at(-1).customFields.some((f) => f.name === 'Разработчик'); })()));
 
   console.log('\n3. Отвергнутое поле не роняет заявку');
   rejectField = 'Роль';
   const before = created.length;
-  const r = await yt.createIssue({ summary: 'x', description: 'x', fields, ticketNo: 'ТП-2026-3' });
+  const r = await yt.createIssue({ summary: 'x', description: 'x', fields });
   check('задача создана после отката', r.id && created.length === before + 1);
   check('без отвергнутого поля, но с остальными', !created.at(-1).customFields.some((f) => f.name === 'Роль') && created.at(-1).customFields.some((f) => f.name === 'Клиника'));
   rejectField = null;
   rejectAssignee = true;
-  await yt.createIssue({ summary: 'x', description: 'x', fields, ticketNo: 'ТП-2026-4' });
+  await yt.createIssue({ summary: 'x', description: 'x', fields });
   check('инженер вне команды — задача без исполнителя, поля целы', !created.at(-1).customFields.some((f) => f.name === 'Разработчик') && created.at(-1).customFields.some((f) => f.name === 'Клиника'));
   rejectAssignee = false;
-  await yt.createIssue({ summary: 'x', description: 'x', fields: { ...fields, urgency: 'Срочно-срочно' }, ticketNo: 'ТП-2026-5' });
-  const cf5 = Object.fromEntries(created.at(-1).customFields.map((f) => [f.name, f.value?.name ?? f.value?.login ?? f.value]));
+  await yt.createIssue({ summary: 'x', description: 'x', fields: { ...fields, urgency: 'Срочно-срочно' } });
+  const cf5 = Object.fromEntries(created.at(-1).customFields.map((f) => [f.name, val(f)]));
   check('значения нет в списке — поле выброшено, остальные целы', !('Срочность' in cf5) && cf5['Клиника'] === 'ГП-1' && cf5['Разработчик'] === 'shcherbakov_eg', JSON.stringify(cf5));
+
+  rejectVisibility = true;
+  await yt.createIssue({ summary: 'x', description: 'x', fields, createdAt: Date.UTC(2026, 9, 1) });
+  check('отвергнутая видимость — задача создана без неё, поля целы', !created.at(-1).visibility && created.at(-1).customFields.some((f) => f.name === 'Клиника'));
+  rejectVisibility = false;
 
   console.log('\n4. Комментарии и файлы');
   const fresh = await yt.newComments('2-1', 0);

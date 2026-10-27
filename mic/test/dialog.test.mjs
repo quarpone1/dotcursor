@@ -95,8 +95,8 @@ console.log('\n1. Ошибка — полный путь до подтвержд
 
   const sent = tap(s, 'ok:send');
   check('заявка закрыта', s.phase === 'done');
-  check('пользователю показан номер и приоритет',
-    new RegExp(s.ticketNo).test(sent.replies[0].text) && /P0\/P1/.test(sent.replies[0].text));
+  check('пользователю показан приоритет, номер придёт от YouTrack следом',
+    /Заявка отправлена/.test(sent.replies[0].text) && /P0\/P1/.test(sent.replies[0].text), sent.replies[0].text);
 
   const after = text(s, 'ещё что-то');
   check('после отправки диалог не продолжается', /уже закрыта/.test(after.replies[0].text));

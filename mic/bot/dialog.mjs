@@ -305,8 +305,8 @@ export function handle(session, input) {
       session.finishedAt = Date.now();
       const [prio, sla] = priorityOf(session.answers.urgency);
       replies.push({
-        text: `Заявка ${session.ticketNo} отправлена.\nПриоритет: ${prio} · SLA ${sla}\n\n` +
-              'Инженер увидит её целиком, одним сообщением. Ответы придут сюда же.',
+        text: `Заявка отправлена.\nПриоритет: ${prio} · SLA ${sla}\n\n` +
+              'Инженер увидит её целиком, одним сообщением. Номер и ссылка на задачу придут следом.',
         buttons: [],
       });
       return out();

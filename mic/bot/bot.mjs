@@ -18,7 +18,7 @@ import { createTask, findContact, taskName, planfixConfigured,
          uploadFile, newComments, addressedToContact, createContact,
          addComment, isOwnComment, FROM_MAX_MARK, downloadFile, loadFields,
          rateLimitSeconds, fieldsLoaded, changedTasksSince } from './planfix.mjs';
-import { priorityOf } from '../ticket.mjs';
+import { priorityOf, ticketText } from '../ticket.mjs';
 import * as yt from './youtrack.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -180,14 +180,22 @@ async function transferFile(file, buf = null) {
   }
 }
 
-/** Дубль заявки в YouTrack: задача + вложения. Ошибка здесь не должна ронять Planfix. */
+/** Карточка заявки: номер и ссылка появляются, когда YouTrack выдал номер. */
+const card = (session, { ticketNo = null, link = null } = {}) =>
+  ticketText({ ticketNo, link, fields: session.answers, files: session.files || [], source: 'бот MAX', now: new Date(session.startedAt || Date.now()) });
+
+/**
+ * Задача в YouTrack: поля, видимость по клинике, вложения. Создаётся первой —
+ * её номер (MIC-12) становится номером заявки для человека и для Planfix.
+ * Ошибка здесь не должна ронять Planfix.
+ */
 async function createYouTrackIssue(session, buffers) {
   const [priority] = priorityOf(session.answers.urgency);
   const issue = await yt.createIssue({
-    summary: taskName({ ticketNo: session.ticketNo, priority, fields: session.answers }),
-    description: summary(session),
+    summary: taskName({ ticketNo: null, priority, fields: session.answers }),
+    description: card(session),
     fields: session.answers,
-    ticketNo: session.ticketNo,
+    createdAt: session.startedAt || Date.now(),
   });
   let files = 0;
   for (const f of session.files || []) {
@@ -198,6 +206,23 @@ async function createYouTrackIssue(session, buffers) {
   }
   console.log(`${session.ticketNo} → YouTrack ${issue.key}${files ? `, файлов ${files}` : ''}`);
   return issue;
+}
+
+/** YouTrack до Planfix: даже если Planfix на паузе, у человека сразу есть номер и ссылка. */
+async function ensureYouTrack(session, buffers = null) {
+  if (session.ytIssue || !yt.youtrackConfigured) return session.ytIssue || null;
+  try {
+    const bufs = buffers || new Map();
+    if (!buffers) {
+      for (const f of session.files || []) { const buf = await fetchMaxFile(f); if (buf) bufs.set(f, buf); }
+      uniqueNames([...bufs.keys()]);
+    }
+    session.ytIssue = await createYouTrackIssue(session, bufs);
+    session.ticketLink = yt.issueUrl(session.ytIssue.key);
+  } catch (err) {
+    console.error(`${session.ticketNo}: YouTrack не создался (${err.message.slice(0, 120)}) — повторю позже.`);
+  }
+  return session.ytIssue || null;
 }
 
 /** Заявка становится ОТДЕЛЬНОЙ задачей в Planfix, вместе с файлами. */
@@ -213,34 +238,35 @@ async function createPlanfixTask(session) {
     if (buf) buffers.set(f, buf);
   }
   uniqueNames([...buffers.keys()]);
+
+  // Сначала YouTrack: его номер идёт в название задачи Planfix и человеку.
+  const issue = await ensureYouTrack(session, buffers);
+  const no = issue?.key || session.ticketNo;
+  const link = issue ? yt.issueUrl(issue.key) : null;
+
   for (const [f, buf] of buffers) {
     const id = await transferFile(f, buf);
     if (id) fileIds.push(id);
   }
 
   const id = await createTask({
-    name: taskName({ ticketNo: session.ticketNo, priority, fields: session.answers }),
-    description: summary(session).replace(/\n/g, '<br>'),
+    name: taskName({ ticketNo: no, priority, fields: session.answers }),
+    description: card(session, { ticketNo: no, link }).replace(/\n/g, '<br>'),
     contactId: contact?.id,
     fileIds,
     clinic: session.answers.clinic,
-    fields: { ...session.answers, ticketNo: session.ticketNo, source: 'бот MAX' },
+    fields: { ...session.answers, ticketNo: no, source: 'бот MAX' },
   });
-  console.log(`${session.ticketNo} → задача Planfix ${id}` +
+  console.log(`${no} → задача Planfix ${id}` +
     `${contact ? `, контакт ${contact.id}` : ''}${fileIds.length ? `, файлов ${fileIds.length}` : ''}`);
-
-  // Дубль в YouTrack. Не получилось — запомним снимок и доделаем на ближайшем тике.
-  let issue = null;
-  if (yt.youtrackConfigured) {
-    try { issue = await createYouTrackIssue(session, buffers); }
-    catch (err) { console.error(`${session.ticketNo}: YouTrack не создался (${err.message.slice(0, 120)}) — повторю позже.`); }
-  }
+  session.ticketNo = no;
+  session.ticketLink = link;
 
   // Ставим задачу на присмотр: ответы инженера отсюда поедут обратно в MAX.
   if (id) {
     tickets.push({
       taskId: id,
-      ticketNo: session.ticketNo,
+      ticketNo: no,
       title: String(session.answers.title || '').slice(0, 40),
       userId: session.user?.id,
       chatId: session.chatId || null,
@@ -252,7 +278,7 @@ async function createPlanfixTask(session) {
       ytKey: issue?.key || null,
       ytSince: Date.now(),
       ytPending: (!issue && yt.youtrackConfigured)
-        ? { answers: session.answers, files: session.files || [], ticketNo: session.ticketNo, tries: 0 }
+        ? { answers: session.answers, files: session.files || [], ticketNo: session.ticketNo, startedAt: session.startedAt || Date.now(), tries: 0 }
         : null,
     });
     await saveTickets();
@@ -267,10 +293,14 @@ async function retryYouTrackPending() {
     if (t.ytPending.tries >= 10) continue;
     t.ytPending.tries++;
     try {
-      const fake = { ticketNo: t.ticketNo, answers: t.ytPending.answers, files: t.ytPending.files, user: { id: t.userId } };
+      const fake = { ticketNo: t.ticketNo, answers: t.ytPending.answers, files: t.ytPending.files, startedAt: t.ytPending.startedAt, user: { id: t.userId } };
       const issue = await createYouTrackIssue(fake, new Map());
+      const oldNo = t.ticketNo;
       t.ytId = issue.id; t.ytKey = issue.key; t.ytSince = Date.now(); t.ytPending = null;
+      t.ticketNo = issue.key;
       await saveTickets();
+      await api.send({ userId: t.userId, chatId: t.chatId,
+        text: `Заявке ${oldNo} присвоен номер ${issue.key}.\n${yt.issueUrl(issue.key)}`, buttons: [] }).catch(() => {});
     } catch (err) {
       console.error(`${t.ticketNo}: YouTrack, попытка ${t.ytPending.tries}: ${err.message.slice(0, 120)}`);
     }
@@ -376,7 +406,7 @@ async function relayYouTrackTicket(t) {
       if (!body) continue;
       await api.send({
         userId: t.userId, chatId: t.chatId,
-        text: `Ответ по заявке ${t.ticketNo} (YouTrack ${t.ytKey})
+        text: `Ответ по заявке ${t.ticketNo}${t.ytKey && t.ytKey !== t.ticketNo ? ` (YouTrack ${t.ytKey})` : ''}
 ${who}:
 
 ${body}`,
@@ -558,6 +588,7 @@ async function enqueue(session) {
   queue.push({
     ticketNo: session.ticketNo, answers: session.answers, files: session.files || [],
     user: session.user, chatId: session.chatId || null, queuedAt: Date.now(), tries: 0,
+    startedAt: session.startedAt || Date.now(), ytIssue: session.ytIssue || null, ticketLink: session.ticketLink || null,
   });
   await saveQueue();
   console.log(`${session.ticketNo} → в очередь (Planfix недоступен), в очереди ${queue.length}`);
@@ -713,22 +744,22 @@ async function postReply(ev, mode) {
 
 /** Собранная заявка уходит как одно «сообщение пользователя» — задача создастся целиком. */
 async function deliverTicket(session) {
-  const card = summary(session);
+  const text = summary(session);
 
   if (MODE !== 'webhook') {
-    console.log(`\n─── ${session.ticketNo}: в Planfix ушло бы это ───\n${card}\n`);
+    console.log(`\n─── ${session.ticketNo}: в Planfix ушло бы это ───\n${text}\n`);
     return true;
   }
 
   // Основной путь: отдельная задача через API. Прежняя пересылка в канал
   // остаётся страховкой — если API недоступен, заявка всё равно дойдёт.
   if (planfixConfigured) {
-    if (apiPaused()) { await enqueue(session); return 'queued'; }
+    if (apiPaused()) { await ensureYouTrack(session); await enqueue(session); return 'queued'; }
     try {
       await createPlanfixTask(session);
       return true;
     } catch (err) {
-      if (pauseFor(err)) { await enqueue(session); return 'queued'; }
+      if (pauseFor(err)) { await ensureYouTrack(session); await enqueue(session); return 'queued'; }
       console.error('Не удалось создать задачу через API, пересылаю в канал:', err.message);
     }
   }
@@ -744,7 +775,7 @@ async function deliverTicket(session) {
   const base = structuredClone(sample);
   base.update_type = 'message_created';
   base.timestamp = Date.now();
-  base.message.body = { ...(base.message.body || {}), text: card, attachments: [] };
+  base.message.body = { ...(base.message.body || {}), text, attachments: [] };
 
   const ok = await forwardRaw(base);
   // вложения досылаем исходными событиями — так они лягут в ту же задачу
@@ -906,16 +937,18 @@ export async function dispatch(update) {
 
   if (result.done) {
     const ok = await deliverTicket(session);
+    const no = session.ytIssue?.key || session.ticketNo;
+    const head = `Заявка ${no} принята.${session.ticketLink ? `\n${session.ticketLink}` : ''}`;
     if (ok === 'queued') {
       await reply(ev, [{
-        text: 'Заявка принята и сохранена. Система задач сейчас недоступна — передам, как только она ответит, и сообщу здесь.',
+        text: `${head}\n\nЗаявка сохранена. Система задач Planfix сейчас недоступна — передам, как только она ответит, и сообщу здесь.`,
         buttons: [],
       }]);
     }
     // Кнопка на будущее: после заявки обычные сообщения уходят инженеру,
     // и человеку нужен явный способ начать новую.
     await reply(ev, [{
-      text: 'Ответы инженера придут сюда. Дописать что-то к заявке можно через «Мои заявки».',
+      text: `${ok && ok !== 'queued' ? head + '\n\n' : ''}Ответы инженера придут сюда. Дописать что-то к заявке можно через «Мои заявки».`,
       buttons: MENU,
     }]);
     if (!ok) {
