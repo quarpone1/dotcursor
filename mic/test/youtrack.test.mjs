@@ -41,7 +41,11 @@ const srv = createServer(async (req, res) => {
 
   if (url.pathname === '/api/admin/projects') return send(200, [{ id: '59-247', shortName: 'MIC', name: 'Сопровождение МИЦ', team: { id: '581-1', name: 'Сопровождение МИЦ Team' } }]);
   if (url.pathname === '/api/groups') return send(200, [{ id: '20-1', name: 'Клиенты Тюмень (ГП-1)' }, { id: '20-2', name: 'Клиенты Тюмень (Медгород)' }, { id: '581-1', name: 'Сопровождение МИЦ Team' }]);
-  if (url.pathname === '/api/admin/projects/59-247/customFields') return send(200, [{ field: { name: 'Месяц создания' }, bundle: { id: '70-1' } }]);
+  if (url.pathname === '/api/admin/projects/59-247/customFields') return send(200, [
+    { $type: 'VersionProjectCustomField', field: { name: 'Месяц создания' }, bundle: { id: '70-1' } },
+    { $type: 'EnumProjectCustomField', field: { name: 'Где выявлено' }, bundle: { id: '31-9' } },
+  ]);
+  if (url.pathname === '/api/admin/customFieldSettings/bundles/enum/31-9/values') return send(200, [{ name: 'МедГород' }, { name: 'ТюмГМУ', archived: true }]);
   if (url.pathname === '/api/admin/customFieldSettings/bundles/version/70-1/values' && req.method === 'GET') return send(200, [{ name: '2026.09' }, { name: '2026.10' }]);
   if (url.pathname === '/api/admin/customFieldSettings/bundles/version/70-1/values' && req.method === 'POST') { monthsAdded.push(body.name); return send(200, { id: 'v9', name: body.name }); }
   if (url.pathname === '/api/issues' && req.method === 'POST') {
@@ -82,7 +86,7 @@ try {
   check('клиника, тип, срочность — списками', cf['Клиника'] === 'ГП-1' && cf['Тип заявки'] === 'Ошибка' && cf['Срочность'] === 'Блокирует работу (полный отказ)', JSON.stringify(cf));
   check('Type и Priority по соответствию', cf.Type === 'Bug' && cf.Priority === 'Critical', `${cf.Type}/${cf.Priority}`);
   check('строковые поля, «Номер заявки» больше не заполняется', !('Номер заявки' in cf) && cf['Модуль'] === 'Касса' && cf['Роль'] === 'Кассир' && cf['Пациент'] === 'А-1, КБП 3' && cf['Источник'] === 'бот MAX', JSON.stringify(cf));
-  check('Объект и Где выявлено по клинике (ГП-1 → ГП1)', cf['Объект'] === 'ГП1' && cf['Где выявлено'] === 'ГП1', JSON.stringify(cf));
+  check('Объект по клинике (ГП-1 → ГП1); «Где выявлено» без ГП1 в списке проекта — не отправлено', cf['Объект'] === 'ГП1' && !('Где выявлено' in cf), JSON.stringify(cf));
   check('Объект — списком (MultiEnum)', created[0].customFields.find((f) => f.name === 'Объект')?.$type === 'MultiEnumIssueCustomField');
   check('Месяц создания = месяц оформления', cf['Месяц создания'] === '2026.10', cf['Месяц создания']);
   check('видимость: группа клиники + команда', created[0].visibility?.$type === 'LimitedVisibility' && JSON.stringify(created[0].visibility.permittedGroups) === '[{"id":"20-1"},{"id":"581-1"}]', JSON.stringify(created[0].visibility));
@@ -97,6 +101,9 @@ try {
   await yt.createIssue({ summary: 'x', description: 'x', fields: { kind: 'Ошибка', clinic: 'ТГМУ' } });
   check('нет группы клиники — задача без ограничения видимости', !created.at(-1).visibility, JSON.stringify(created.at(-1).visibility));
   check('но «Объект» всё равно подставлен (ТГМУ → ТюмГМУ)', val(created.at(-1).customFields.find((f) => f.name === 'Объект')) === 'ТюмГМУ');
+  check('архивное значение списка считается отсутствующим', !created.at(-1).customFields.some((f) => f.name === 'Где выявлено'));
+  await yt.createIssue({ summary: 'x', description: 'x', fields: { kind: 'Ошибка', clinic: 'МедГород' } });
+  check('значение из списка проекта уходит', val(created.at(-1).customFields.find((f) => f.name === 'Где выявлено')) === 'МедГород');
   check('незнакомая клиника — без исполнителя', !(await (async () => { await yt.createIssue({ summary: 'x', description: 'x', fields: { clinic: 'Нет такой' } }); return created.at(-1).customFields.some((f) => f.name === 'Разработчик'); })()));
 
   console.log('\n3. Отвергнутое поле не роняет заявку');

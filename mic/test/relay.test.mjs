@@ -95,7 +95,7 @@ const ytSrv = createServer(async (req, res) => {
   if (url.pathname === '/api/files/yt-1') { res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(Buffer.alloc(1024, 3)); }
   if (url.pathname === '/api/admin/projects') return send(200, [{ id: '59-247', shortName: 'MIC', name: 'Сопровождение МИЦ', team: { id: '581-1', name: 'Сопровождение МИЦ Team' } }]);
   if (url.pathname === '/api/groups') return send(200, [{ id: '20-1', name: 'Клиенты Тюмень (Медгород)' }, { id: '20-2', name: 'Клиенты Тюмень (Нефтяник стационар)' }, { id: '581-1', name: 'Сопровождение МИЦ Team' }]);
-  if (url.pathname === '/api/admin/projects/59-247/customFields') return send(200, [{ field: { name: 'Месяц создания' }, bundle: { id: '70-1' } }]);
+  if (url.pathname === '/api/admin/projects/59-247/customFields') return send(200, [{ $type: 'VersionProjectCustomField', field: { name: 'Месяц создания' }, bundle: { id: '70-1' } }]);
   if (url.pathname === '/api/admin/customFieldSettings/bundles/version/70-1/values') return send(200, req.method === 'GET' ? [] : { id: 'v1', name: b.name });
   if (url.pathname === '/api/issues' && req.method === 'POST') {
     if (ytDown) return send(503, { error: 'unavailable' });

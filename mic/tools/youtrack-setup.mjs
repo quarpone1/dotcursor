@@ -32,7 +32,11 @@ console.log(`Проект ${PROJECT} «${ytProject.name}», команда ${TEA
 console.log('== Роль «Клиент МИЦ»');
 const roles = await call('GET', '/hub/api/rest/roles?fields=id,name&$top=200');
 let role = (roles.roles || []).find((r) => r.name === 'Клиент МИЦ');
-if (!role) {
+// Создавать роли токену могут не разрешить (403). Тогда берём встроенную Reporter:
+// читать задачи и комментарии, комментировать, прикладывать файлы, создавать
+// задачи; менять поля и статусы нельзя. Это ближе всего к задуманному.
+const FALLBACK_ROLE = 'Reporter';
+if (!role) try {
   role = await call('POST', '/hub/api/rest/roles', {
     name: 'Клиент МИЦ',
     description: 'Клиент объекта в общем проекте «Сопровождение МИЦ»: читает свои задачи (по видимости), комментирует, прикладывает файлы. Без изменения полей и статусов.',
@@ -42,6 +46,11 @@ if (!role) {
       'jetbrains.jetpass.user-read-basic', 'jetbrains.jetpass.profile-updateSelf'].map((key) => ({ key })),
   });
   console.log('  создана', role.id);
+} catch (err) {
+  if (!/403/.test(err.message)) throw err;
+  role = (roles.roles || []).find((r) => r.name === FALLBACK_ROLE);
+  if (!role) throw new Error(`Нет права создать роль, а встроенной ${FALLBACK_ROLE} не найдено`);
+  console.log(`  создать роль нельзя (403) — использую встроенную «${FALLBACK_ROLE}» ${role.id}`);
 } else console.log('  уже есть', role.id);
 
 console.log('== Группы');
@@ -54,7 +63,7 @@ for (const [, name] of Object.entries(CLINIC_GROUP)) {
     byName.set(name, g); console.log(`  + ${name}`);
   } else console.log(`  = ${name} (есть)`);
   const has = (g.projectRoles || []).some((pr) => pr.role?.id === role.id && pr.project?.id === MIC_HUB);
-  if (!has) { await call('POST', `/hub/api/rest/usergroups/${g.id}/projectroles`, { role: { id: role.id }, project: { id: MIC_HUB } }); console.log(`      роль «Клиент МИЦ» в ${PROJECT} выдана`); }
+  if (!has) { await call('POST', `/hub/api/rest/usergroups/${g.id}/projectroles`, { role: { id: role.id }, project: { id: MIC_HUB } }); console.log(`      роль «${role.name}» в ${PROJECT} выдана`); }
   else console.log('      роль уже есть');
 }
 

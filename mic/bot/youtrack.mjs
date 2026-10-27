@@ -66,6 +66,7 @@ let teamGroupId = null;          // команда проекта — ей ви�
 const groupIds = new Map();      // имя группы → id (для видимости по клинике)
 let monthBundleId = null;        // список значений «Месяц создания»
 const knownMonths = new Set();
+const enumValues = new Map();    // имя поля-списка → Set допустимых значений
 
 export async function loadProject() {
   if (!youtrackConfigured) return null;
@@ -76,7 +77,7 @@ export async function loadProject() {
   teamGroupId = p.team?.id || null;
   console.log(`YouTrack: проект ${p.shortName} «${p.name}» (${p.id})`);
   await loadGroups(p).catch((e) => console.error(`YouTrack: группы не прочитались (${e.message}) — задачи будут без ограничения видимости.`));
-  await loadMonths().catch((e) => console.error(`YouTrack: список «Месяц создания» не прочитался (${e.message}).`));
+  await loadBundles().catch((e) => console.error(`YouTrack: списки значений не прочитались (${e.message}).`));
   return p;
 }
 
@@ -91,15 +92,33 @@ async function loadGroups(project) {
     `${missing.length ? `, нет: ${missing.join(', ')}` : ''}; команда ${teamGroupId ? 'найдена' : 'НЕ найдена'}`);
 }
 
-async function loadMonths() {
-  const fields = await yt('GET', `/admin/projects/${projectId}/customFields?fields=field(name),bundle(id)&$top=100`);
-  const f = (fields || []).find((x) => x.field?.name === 'Месяц создания');
-  if (!f?.bundle?.id) return;
-  monthBundleId = f.bundle.id;
-  const vals = await yt('GET', `/admin/customFieldSettings/bundles/version/${monthBundleId}/values?fields=name&$top=500`);
-  knownMonths.clear();
-  for (const v of vals || []) knownMonths.add(v.name);
+/**
+ * Списки значений полей проекта: «Месяц создания» (чтобы добавлять новый месяц)
+ * и списочные поля (чтобы не отправлять значение, которого в проекте нет —
+ * YouTrack на это отвечает ошибкой без имени поля).
+ */
+async function loadBundles() {
+  const fields = await yt('GET', `/admin/projects/${projectId}/customFields?fields=$type,field(name),bundle(id)&$top=100`);
+  enumValues.clear();
+  for (const f of fields || []) {
+    const name = f.field?.name; const bundle = f.bundle?.id;
+    if (!name || !bundle) continue;
+    if (name === 'Месяц создания' && f.$type === 'VersionProjectCustomField') {
+      monthBundleId = bundle;
+      const vals = await yt('GET', `/admin/customFieldSettings/bundles/version/${bundle}/values?fields=name&$top=500`);
+      knownMonths.clear();
+      for (const v of vals || []) knownMonths.add(v.name);
+    } else if (f.$type === 'EnumProjectCustomField') {
+      const vals = await yt('GET', `/admin/customFieldSettings/bundles/enum/${bundle}/values?fields=name,archived&$top=500`);
+      enumValues.set(name, new Set((vals || []).filter((v) => !v.archived).map((v) => v.name)));
+    }
+  }
+  const empty = [...enumValues].filter(([, set]) => !set.size).map(([n]) => n);
+  console.log(`YouTrack: списков значений ${enumValues.size}${empty.length ? `, пустые: ${empty.join(', ')}` : ''}; месяцев ${knownMonths.size}`);
 }
+
+/** Значение есть в списке поля? Если список не читали — считаем, что есть (решит сервер). */
+const valueKnown = (field, value) => !enumValues.has(field) || enumValues.get(field).has(value);
 
 /** «2026.10» — месяц оформления заявки, как заведено в YouTrack. */
 export function monthOf(ms = Date.now()) {
@@ -141,6 +160,12 @@ const PRIORITY_BY_URGENCY = { [URGENCIES[0]]: 'Critical', [URGENCIES[1]]: 'Major
 
 const ENUM = (name, value) => ({ name, $type: 'SingleEnumIssueCustomField', value: { name: value } });
 const MULTI = (name, value) => ({ name, $type: 'MultiEnumIssueCustomField', value: [{ name: value }] });
+// Списочное поле только с известным значением; иначе предупреждение и без поля.
+const pushEnum = (out, make, name, value) => {
+  if (!value) return;
+  if (valueKnown(name, value)) out.push(make(name, value));
+  else console.error(`YouTrack: в поле «${name}» нет значения «${value}» — поле не заполняю.`);
+};
 const VERSION = (name, value) => ({ name, $type: 'SingleVersionIssueCustomField', value: { name: value } });
 const TEXT = (name, value) => ({ name, $type: 'SimpleIssueCustomField', value: String(value).slice(0, 1000) });
 
@@ -153,11 +178,14 @@ export function assigneeFor(clinic) {
 function customFields(f, month) {
   const out = [];
   const isBug = !f.kind || f.kind === KINDS[0];
-  if (f.clinic) out.push(ENUM('Клиника', f.clinic));
+  pushEnum(out, ENUM, 'Клиника', f.clinic);
   const obj = CLINIC_OBJECT[f.clinic];
-  if (obj) { out.push(MULTI('Объект', obj)); if (isBug) out.push(MULTI('Где выявлено', obj)); }
-  if (f.kind) { out.push(ENUM('Тип заявки', f.kind)); if (TYPE_BY_KIND[f.kind]) out.push(ENUM('Type', TYPE_BY_KIND[f.kind])); }
-  if (f.urgency) { out.push(ENUM('Срочность', f.urgency)); if (PRIORITY_BY_URGENCY[f.urgency]) out.push(ENUM('Priority', PRIORITY_BY_URGENCY[f.urgency])); }
+  pushEnum(out, MULTI, 'Объект', obj);
+  if (isBug) pushEnum(out, MULTI, 'Где выявлено', obj);
+  pushEnum(out, ENUM, 'Тип заявки', f.kind);
+  pushEnum(out, ENUM, 'Type', TYPE_BY_KIND[f.kind]);
+  pushEnum(out, ENUM, 'Срочность', f.urgency);
+  pushEnum(out, ENUM, 'Priority', PRIORITY_BY_URGENCY[f.urgency]);
   if (month) out.push(VERSION('Месяц создания', month));
   if (f.module) out.push(TEXT('Модуль', f.module));
   if (f.role) out.push(TEXT('Роль', f.role));
