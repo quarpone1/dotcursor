@@ -6,7 +6,8 @@
 // Код один на всех (BOT_ENGINEER_CODE в окружении) — без него любой пользователь
 // бота мог бы подписаться на чужие заявки с данными пациентов. Логин должен быть
 // из таблицы инженеров (ENGINEER_LOGINS) или из BOT_ENGINEER_LOGINS; «все» —
-// подписка на заявки всех клиник (для старшего).
+// подписка на заявки всех клиник (для старшего); «<логин> все» — всё и при
+// этом кнопка «В работу» ставит исполнителем этот логин.
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { ENGINEER_LOGINS } from '../ticket.mjs';
@@ -20,9 +21,11 @@ const known = () => new Set([...Object.values(ENGINEER_LOGINS), ...EXTRA]);
 
 const CMD_RE = /^\/?(?:инженер|engineer)(?:\s+(.*))?$/i;
 
+const isAll = (w) => /^(все|all|\*)$/i.test(w || '');
+
 /**
  * Разбирает команду инженера. null — это не команда.
- * {login, code} — регистрация; {stop:true} — отписаться; {help:true} — без аргументов.
+ * {login, all, code} — регистрация; {stop:true} — отписаться; {help:true} — без аргументов.
  */
 export function parseCommand(text) {
   const m = CMD_RE.exec(String(text || '').trim());
@@ -30,8 +33,9 @@ export function parseCommand(text) {
   const args = (m[1] || '').trim().split(/\s+/).filter(Boolean);
   if (!args.length) return { help: true };
   if (/^(стоп|stop|off|выкл)$/i.test(args[0])) return { stop: true };
-  const login = /^(все|all|\*)$/i.test(args[0]) ? ALL : args[0];
-  return { login, code: args[1] || '' };
+  if (isAll(args[0])) return { login: ALL, all: true, code: args[1] || '' };
+  if (isAll(args[1])) return { login: args[0], all: true, code: args[2] || '' };
+  return { login: args[0], all: false, code: args[1] || '' };
 }
 
 export class Engineers {
@@ -53,17 +57,18 @@ export class Engineers {
   }
 
   /** Результат регистрации — текст для ответа человеку. */
-  async register({ login, code }, { userId, chatId = null, name = null }) {
+  async register({ login, all = false, code }, { userId, chatId = null, name = null }) {
     if (!engineersEnabled) return { ok: false, text: 'Уведомления для инженеров на этом боте не включены.' };
     if (!code || code !== CODE) return { ok: false, text: 'Неверный код. Формат: инженер <логин YouTrack> <код>' };
     if (login !== ALL && !known().has(login)) {
       return { ok: false, text: `Логин «${login}» не из списка инженеров. Известные: ${[...known()].join(', ')}, или «все».` };
     }
     this.list = this.list.filter((e) => e.userId !== userId);
-    this.list.push({ login, userId, chatId, name, since: new Date().toISOString() });
+    all = all || login === ALL;
+    this.list.push({ login, all, userId, chatId, name, since: new Date().toISOString() });
     await this.save();
-    console.log(`Инженер ${login} (${name || userId}) подписан на уведомления`);
-    const what = login === ALL ? 'заявки всех клиник' : `заявки клиник инженера ${login}`;
+    console.log(`Инженер ${login}${all ? ' (все клиники)' : ''} (${name || userId}) подписан на уведомления`);
+    const what = all ? 'заявки всех клиник' : `заявки клиник инженера ${login}`;
     return { ok: true, text: `Готово. Сюда будут приходить ${what}: новые заявки, ответы клиентов, кнопка «В работу».\nОтписаться: инженер стоп` };
   }
 
@@ -80,6 +85,6 @@ export class Engineers {
 
   /** Кому слать по заявке с таким исполнителем: сам инженер и подписанные на «все». */
   targetsFor(login) {
-    return this.list.filter((e) => e.login === ALL || (login && e.login === login));
+    return this.list.filter((e) => e.all || e.login === ALL || (login && e.login === login));
   }
 }
