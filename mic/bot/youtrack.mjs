@@ -254,6 +254,27 @@ export async function createIssue({ summary, description, fields, createdAt = Da
   throw new Error('YouTrack: задача не создалась после нескольких попыток');
 }
 
+// Статус «взято в работу». В MIC это «In Progress»; если в проекте он зовётся иначе — задать в окружении.
+const STATE_IN_PROGRESS = process.env.YOUTRACK_STATE_IN_PROGRESS || 'In Progress';
+
+/**
+ * Инженер нажал «В работу»: исполнитель — он, статус — «В работе».
+ * Если статус в проекте не принимается, меняем хотя бы исполнителя.
+ */
+export async function takeIssue(issueId, login) {
+  const assignee = { name: 'Разработчик', $type: 'SingleUserIssueCustomField', value: { login } };
+  const state = { name: 'State', $type: 'StateIssueCustomField', value: { name: STATE_IN_PROGRESS } };
+  try {
+    await yt('POST', `/issues/${issueId}?fields=id`, { body: { customFields: [state, assignee] } });
+    return { state: STATE_IN_PROGRESS };
+  } catch (err) {
+    if (err.status !== 400 && err.status !== 500) throw err;
+    console.error(`YouTrack не принял статус «${STATE_IN_PROGRESS}» (${String(err.detail || '').slice(0, 80)}) — меняю только исполнителя.`);
+    await yt('POST', `/issues/${issueId}?fields=id`, { body: { customFields: [assignee] } });
+    return { state: null };
+  }
+}
+
 /** Файл во вложения задачи. */
 export async function uploadAttachment(issueId, buffer, filename) {
   const fd = new FormData();

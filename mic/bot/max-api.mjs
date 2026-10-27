@@ -59,11 +59,13 @@ export class MaxApi {
     return this.call('GET', '/updates', { params: { marker, timeout, limit } });
   }
 
-  /** Кнопки нашего формата → вложение inline_keyboard. */
+  /** Кнопки нашего формата → вложение inline_keyboard. {text, url} — кнопка-ссылка. */
   static keyboard(rows) {
     if (!rows?.length) return [];
     const buttons = rows
-      .map((row) => row.map((b) => ({ type: 'callback', text: b.text, payload: b.payload })))
+      .map((row) => row.map((b) => b.url
+        ? { type: 'link', text: b.text, url: b.url }
+        : { type: 'callback', text: b.text, payload: b.payload }))
       .filter((row) => row.length);
     return buttons.length ? [{ type: 'inline_keyboard', payload: { buttons } }] : [];
   }

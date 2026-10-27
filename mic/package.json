@@ -28,7 +28,8 @@
     "relay:test": "node test/relay.test.mjs",
     "youtrack:test": "node test/youtrack.test.mjs",
     "youtrack:setup": "node --env-file-if-exists=.env tools/youtrack-setup.mjs",
-    "files:test": "node test/files.test.mjs"
+    "files:test": "node test/files.test.mjs",
+    "engineers:test": "node test/engineers.test.mjs"
   },
   "dependencies": {
     "nodemailer": "^7.0.9"

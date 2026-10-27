@@ -37,11 +37,13 @@ const body = async (req) => {
 };
 
 const maxUploads = [];       // что бот загрузил в MAX
+const answers = [];          // ответы бота на нажатия кнопок (подмена сообщения)
 const maxSrv = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const b = await body(req);
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  if (url.pathname === '/messages') { sentToUser.push(b); return res.end('{"message":{}}'); }
+  if (url.pathname === '/messages') { sentToUser.push({ ...b, to: Number(url.searchParams.get('user_id')) }); return res.end('{"message":{}}'); }
+  if (url.pathname === '/answers') { answers.push({ ...b, callbackId: url.searchParams.get('callback_id') }); return res.end('{"success":true}'); }
   if (url.pathname === '/uploads') {
     return res.end(JSON.stringify({ url: `http://127.0.0.1:${MAX_PORT}/upload.do?type=${url.searchParams.get('type')}` }));
   }
@@ -88,6 +90,7 @@ const ytUploads = [];        // вложения, которые бот загр
 let ytEngineerComments = []; // что «написали» инженеры в YouTrack
 let ytDown = false;          // YouTrack недоступен (создание падает)
 const ytQueries = [];
+const ytUpdates = [];        // изменения задач (кнопка «В работу»)
 const ytSrv = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const b = await body(req);
@@ -106,6 +109,7 @@ const ytSrv = createServer(async (req, res) => {
     ytQueries.push(url.searchParams.get('query'));
     return send(200, ytIssues.map((_, i) => ({ id: `2-${i + 1}` })));
   }
+  if (/^\/api\/issues\/[^/]+$/.test(url.pathname) && req.method === 'POST') { ytUpdates.push({ issue: url.pathname.split('/')[3], ...b }); return send(200, { id: url.pathname.split('/')[3] }); }
   if (/^\/api\/issues\/[^/]+\/attachments$/.test(url.pathname)) { ytUploads.push({ issue: url.pathname.split('/')[3], bytes: b.raw?.length || 0 }); return send(200, [{ id: 'a1' }]); }
   if (/^\/api\/issues\/[^/]+\/comments$/.test(url.pathname) && req.method === 'POST') { ytComments.push({ issue: url.pathname.split('/')[3], ...b }); return send(200, { id: 'c-new' }); }
   if (/^\/api\/issues\/2-1\/comments$/.test(url.pathname)) return send(200, ytEngineerComments);
@@ -135,6 +139,7 @@ const bot = spawn(process.execPath, ['bot/bot.mjs'], {
     YOUTRACK_MIN_GAP_MS: '0',
     BOT_PORT: String(BOT_PORT),
     BOT_STATE_DIR: STATE_DIR,
+    BOT_ENGINEER_CODE: 'secret42',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -172,8 +177,24 @@ const btn = (payload) => ({
 });
 const lastText = () => sentToUser[sentToUser.length - 1]?.text || '';
 const lastButtons = () => JSON.stringify(sentToUser[sentToUser.length - 1]?.attachments || []);
+// Инженеры: Деравчук (МедГород) и старший, подписанный на всё
+const ENG = 971100, BOSS = 971101;
+const as = (u, name, who) => ({ ...u, message: { ...u.message, sender: { user_id: who, name }, recipient: { chat_id: 900 + (who % 100), user_id: who } },
+  ...(u.callback ? { callback: { ...u.callback, user: { user_id: who, name } } } : {}) });
+const toEng = (who) => sentToUser.filter((m) => m.to === who);
 
 try {
+  console.log('\n0. Инженеры подписываются на уведомления');
+  await post(as(msg('инженер deravchuk неверный'), 'Деравчук Михаил', ENG));
+  check('неверный код отклонён', /Неверный код/.test(lastText()), lastText());
+  await post(as(msg('инженер ivanov secret42'), 'Деравчук Михаил', ENG));
+  check('чужой логин отклонён', /не из списка/.test(lastText()), lastText());
+  await post(as(msg('инженер deravchuk secret42'), 'Деравчук Михаил', ENG));
+  check('инженер подписан по логину', /Готово.*deravchuk/.test(lastText()), lastText());
+  await post(as(msg('инженер все secret42'), 'Фиголь Роман', BOSS));
+  check('старший подписан на все клиники', /всех клиник/.test(lastText()), lastText());
+  check('подписка не начала диалог заявки', !sentToUser.some((m) => /Помогу оформить/.test(m.text || '')));
+
   console.log('\n1. Заявка целиком');
   await post(msg('заявка'));
   await post(btn('c:kind:0'));
@@ -199,6 +220,23 @@ try {
   check('заказчик — найденный контакт', taskCreated?.counterparty?.id === 'contact:971',
     JSON.stringify(taskCreated?.counterparty));
   check('задача легла в проект', taskCreated?.project?.id === 16521, JSON.stringify(taskCreated?.project));
+
+  console.log('\n1-и. Инженер получает уведомление и берёт в работу');
+  const noteEng = toEng(ENG).find((m) => /🆕 Заявка MIC-1/.test(m.text || ''));
+  check('инженеру клиники пришла новая заявка', Boolean(noteEng), JSON.stringify(toEng(ENG).map((m) => m.text)));
+  check('в уведомлении клиника, приоритет, суть и ссылка', /МедГород/.test(noteEng?.text) && /P0\/P1/.test(noteEng?.text) && /Не печатается чек/.test(noteEng?.text) && /issue\/MIC-1/.test(noteEng?.text), noteEng?.text);
+  const noteBtns = JSON.stringify(noteEng?.attachments || []);
+  check('кнопки «В работу» и ссылка', /take:2-1/.test(noteBtns) && /"type":"link".*issue\/MIC-1/.test(noteBtns), noteBtns);
+  check('старший тоже получил', toEng(BOSS).some((m) => /🆕 Заявка MIC-1/.test(m.text || '')));
+  check('уведомление одно на заявку', toEng(ENG).filter((m) => /🆕 Заявка MIC-1/.test(m.text || '')).length === 1);
+  await post(as(btn('take:2-1'), 'Посторонний', 971199));
+  check('посторонний не может взять в работу', /для инженеров/.test(lastText()) && ytUpdates.length === 0, lastText());
+  await post(as(btn('take:2-1'), 'Деравчук Михаил', ENG));
+  const upd = ytUpdates.at(-1);
+  const updf = Object.fromEntries((upd?.customFields || []).map((f) => [f.name, f.value?.name ?? f.value?.login]));
+  check('в YouTrack: статус In Progress и исполнитель', upd?.issue === '2-1' && updf.State === 'In Progress' && updf['Разработчик'] === 'deravchuk', JSON.stringify(upd));
+  check('уведомление подменено отметкой', answers.some((a) => /✅ MIC-1 в работе у Деравчук/.test(a.message?.text || '')), JSON.stringify(answers.at(-1)));
+  check('клиенту сообщили, что заявка в работе', sentToUser.some((m) => m.to === USER && /MIC-1 взята в работу\.\nИнженер: Деравчук/.test(m.text || '')), JSON.stringify(sentToUser.slice(-2).map((m) => m.text)));
 
   console.log('\n1а. Дубль заявки в YouTrack');
   check('задача создана и в YouTrack', ytIssues.length === 1, String(ytIssues.length));
@@ -331,6 +369,8 @@ try {
   check('человеку подтвердили отправку', /Отправлено в заявку/.test(lastText()), lastText().slice(0, 40));
   check('и продублирован в YouTrack', ytComments.length === 1 && /Касса номер 3/.test(ytComments[0].text) && /Из MAX/.test(ytComments[0].text),
     JSON.stringify(ytComments[0]).slice(0, 120));
+  const replyNote = toEng(ENG).find((m) => /💬 Клиент ответил по MIC-1/.test(m.text || ''));
+  check('инженер уведомлён об ответе клиента', Boolean(replyNote) && /Касса номер 3/.test(replyNote.text) && /issue\/MIC-1/.test(replyNote.text), JSON.stringify(toEng(ENG).slice(-1).map((m) => m.text)));
 
   console.log('\n6. Свой комментарий не возвращается эхом');
   comments = [...comments, {

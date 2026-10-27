@@ -20,6 +20,7 @@ import { createTask, findContact, taskName, planfixConfigured,
          rateLimitSeconds, fieldsLoaded, changedTasksSince } from './planfix.mjs';
 import { priorityOf, ticketText } from '../ticket.mjs';
 import * as yt from './youtrack.mjs';
+import { Engineers, parseCommand as engineerCommand, engineersEnabled } from './engineers.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -51,6 +52,8 @@ const REPLIES_FILE = join(STATE_DIR, 'bot-replies.json');
 // Каналы и группы, куда добавили бота. GET /chats в MAX отключён, и узнать
 // chat_id канала можно только из события bot_added — поэтому запоминаем сами.
 const CHATS_FILE = join(STATE_DIR, 'bot-chats.json');
+// Инженеры, подписанные на уведомления о заявках своих клиник (см. engineers.mjs).
+const engineers = new Engineers(join(STATE_DIR, 'bot-engineers.json'));
 // Адрес вебхука публичный, поэтому в путь зашиваем секрет: чужой POST не пройдёт.
 const SECRET = process.env.BOT_WEBHOOK_SECRET || '';
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
@@ -219,6 +222,7 @@ async function ensureYouTrack(session, buffers = null) {
     }
     session.ytIssue = await createYouTrackIssue(session, bufs);
     session.ticketLink = yt.issueUrl(session.ytIssue.key);
+    await notifyNewTicket(session, { no: session.ytIssue.key, link: session.ticketLink, ytId: session.ytIssue.id });
   } catch (err) {
     console.error(`${session.ticketNo}: YouTrack не создался (${err.message.slice(0, 120)}) — повторю позже.`);
   }
@@ -261,6 +265,7 @@ async function createPlanfixTask(session) {
     `${contact ? `, контакт ${contact.id}` : ''}${fileIds.length ? `, файлов ${fileIds.length}` : ''}`);
   session.ticketNo = no;
   session.ticketLink = link;
+  if (id && !issue) await notifyNewTicket(session, { no, link: `https://sensey.planfix.ru/task/${id}`, ytId: null });
 
   // Ставим задачу на присмотр: ответы инженера отсюда поедут обратно в MAX.
   if (id) {
@@ -268,6 +273,7 @@ async function createPlanfixTask(session) {
       taskId: id,
       ticketNo: no,
       title: String(session.answers.title || '').slice(0, 40),
+      clinic: session.answers.clinic || null,
       userId: session.user?.id,
       chatId: session.chatId || null,
       contactId: contact?.id || null,
@@ -301,10 +307,112 @@ async function retryYouTrackPending() {
       await saveTickets();
       await api.send({ userId: t.userId, chatId: t.chatId,
         text: `Заявке ${oldNo} присвоен номер ${issue.key}.\n${yt.issueUrl(issue.key)}`, buttons: [] }).catch(() => {});
+      await notifyNewTicket({ ...fake, engineerNotified: false }, { no: issue.key, link: yt.issueUrl(issue.key), ytId: issue.id });
     } catch (err) {
       console.error(`${t.ticketNo}: YouTrack, попытка ${t.ytPending.tries}: ${err.message.slice(0, 120)}`);
     }
   }
+}
+
+/* ---------- уведомления инженерам в MAX ---------- */
+
+const takeButtons = (ytId, link) => [
+  ...(ytId ? [[{ text: '▶ В работу', payload: `take:${ytId}` }]] : []),
+  ...(link ? [[{ text: '🔗 Открыть задачу', url: link }]] : []),
+];
+
+/** Разослать всем, кто подписан на клинику: закреплённый инженер и «все». */
+async function notifyEngineers(clinic, text, buttons = []) {
+  const targets = engineers.targetsFor(yt.assigneeFor(clinic));
+  let sent = 0;
+  for (const e of targets) {
+    try { await api.send({ userId: e.userId, chatId: e.chatId, text, buttons }); sent++; }
+    catch (err) { console.error(`Инженеру ${e.login} не доставлено: ${err.message}`); }
+  }
+  return sent;
+}
+
+/**
+ * Новая заявка → инженеру клиники: суть, приоритет, ссылка, кнопка «В работу».
+ * Один раз на заявку: флаг живёт в сессии и в снимке очереди.
+ */
+async function notifyNewTicket(session, { no, link, ytId }) {
+  if (session.engineerNotified) return;
+  session.engineerNotified = true;
+  const f = session.answers || {};
+  const [priority, sla] = priorityOf(f.urgency);
+  const text = [
+    `🆕 Заявка ${no} · ${(f.kind || 'Ошибка').toLowerCase()} · ${f.clinic}`,
+    `${priority} · SLA ${sla}`,
+    '',
+    `${f.title || ''}`,
+    `Модуль: ${f.module || '—'}${f.role ? ` · ${f.role}` : ''}`,
+    `Заявитель: ${f.user || session.user?.name || '—'}${f.contact ? `, ${f.contact}` : ''}`,
+    ...(session.files?.length ? [`Вложений: ${session.files.length}`] : []),
+    ...(link ? ['', link] : []),
+  ].join('\n');
+  const sent = await notifyEngineers(f.clinic, text, takeButtons(ytId, link));
+  if (sent) console.log(`${no}: уведомлено инженеров — ${sent}`);
+}
+
+/** Ответ клиента по заявке → инженеру клиники. */
+async function notifyClientReply(t, who, body) {
+  if (!t.clinic) return;
+  const link = t.ytKey ? yt.issueUrl(t.ytKey) : `https://sensey.planfix.ru/task/${t.taskId}`;
+  const text = `💬 Клиент ответил по ${t.ticketNo} · ${t.clinic}\n${who}:\n\n${body.slice(0, 1500)}\n\n${link}`;
+  await notifyEngineers(t.clinic, text, takeButtons(t.ytId, link));
+}
+
+/** Кнопка «В работу» под уведомлением: статус и исполнитель в YouTrack, клиенту — сообщение. */
+async function onTake(ev, ytId) {
+  const eng = engineers.byUserId(ev.userId);
+  const dismiss = () => ev.callbackId ? api.answerCallback(ev.callbackId).catch(() => {}) : Promise.resolve();
+  if (!eng) {
+    await dismiss();
+    await reply(ev, [{ text: 'Эта кнопка для инженеров. Подключиться: инженер <логин YouTrack> <код>', buttons: [] }]);
+    return;
+  }
+  const login = eng.login === '*' ? null : eng.login;
+  if (!login) {
+    await dismiss();
+    await reply(ev, [{ text: 'Вы подписаны на «все» без логина — взять задачу в работу можно только под своим логином.', buttons: [] }]);
+    return;
+  }
+  const t = tickets.find((x) => x.ytId === ytId);
+  const no = t?.ticketNo || ytId;
+  try {
+    const { state } = await yt.takeIssue(ytId, login);
+    const who = eng.name || login;
+    const orig = ev.raw?.message?.body?.text || '';
+    const done = `✅ ${no} в работе у ${who}${state ? '' : ' (статус не сменился, только исполнитель)'}`;
+    // Подменяем само уведомление: кнопка «В работу» исчезает, остаётся отметка и ссылка
+    if (ev.callbackId) {
+      await api.answerCallback(ev.callbackId, { text: orig ? `${orig}\n\n${done}` : done, buttons: t?.ytKey ? [[{ text: '🔗 Открыть задачу', url: yt.issueUrl(t.ytKey) }]] : [] })
+        .catch(() => reply(ev, [{ text: done, buttons: [] }]));
+    } else await reply(ev, [{ text: done, buttons: [] }]);
+    console.log(`${no}: взята в работу инженером ${login}`);
+    if (t) {
+      t.lastActivity = Date.now();
+      await saveTickets();
+      await api.send({ userId: t.userId, chatId: t.chatId, text: `Заявка ${no} взята в работу.\nИнженер: ${who}`, buttons: [] }).catch(() => {});
+    }
+  } catch (err) {
+    console.error(`${no}: не удалось взять в работу: ${err.message}`);
+    await dismiss();
+    await reply(ev, [{ text: `Не получилось отметить ${no} в YouTrack: ${String(err.message).slice(0, 120)}`, buttons: [] }]);
+  }
+}
+
+/** Команда «инженер …» — подписка на уведомления. */
+async function onEngineerCommand(ev, cmd) {
+  if (cmd.help) {
+    await reply(ev, [{ text: 'Подписка инженера на заявки своих клиник:\nинженер <логин YouTrack> <код>\nинженер все <код> — заявки всех клиник\nинженер стоп — отписаться', buttons: [] }]);
+    return;
+  }
+  const r = cmd.stop
+    ? await engineers.unregister(ev.userId)
+    : await engineers.register(cmd, { userId: ev.userId, chatId: ev.chatId || null, name: ev.userName || null });
+  await reply(ev, [{ text: r.text, buttons: [] }]);
 }
 
 /* ---------- ответы инженеров обратно в MAX ---------- */
@@ -589,6 +697,7 @@ async function enqueue(session) {
     ticketNo: session.ticketNo, answers: session.answers, files: session.files || [],
     user: session.user, chatId: session.chatId || null, queuedAt: Date.now(), tries: 0,
     startedAt: session.startedAt || Date.now(), ytIssue: session.ytIssue || null, ticketLink: session.ticketLink || null,
+    engineerNotified: Boolean(session.engineerNotified),
   });
   await saveQueue();
   console.log(`${session.ticketNo} → в очередь (Planfix недоступен), в очереди ${queue.length}`);
@@ -729,6 +838,7 @@ async function postReply(ev, mode) {
         console.error(`${t.ticketNo}: ответ не продублировался в YouTrack: ${err.message}`);
       }
     }
+    await notifyClientReply(t, ev.userName || 'пользователь', body).catch((e) => console.error('Уведомление инженеру:', e.message));
     await reply(ev, [{
       text: `Отправлено в заявку ${t.ticketNo}. Можно написать ещё или нажать «Готово».`,
       buttons: REPLY_BTNS(t.taskId),
@@ -835,6 +945,15 @@ export async function dispatch(update) {
   const ev = parseUpdate(update);
   if (!ev.userId && !ev.chatId) return;
   if (ev.group) return void (await onGroupEvent(ev));
+
+  // Инженерское — вне зависимости от того, идёт ли у человека диалог заявки
+  if (ev.kind === 'text') {
+    const cmd = engineerCommand(ev.text);
+    if (cmd) return void (await onEngineerCommand(ev, cmd));
+  }
+  if (ev.kind === 'callback' && /^take:/.test(String(ev.payload || ''))) {
+    return void (await onTake(ev, String(ev.payload).slice(5)));
+  }
 
   const session = sessions.get(ev.userId);
 
@@ -1058,6 +1177,8 @@ await loadState();
 await loadTickets();
 await loadReplies();
 await loadQueue();
+await engineers.load();
+if (!engineersEnabled) console.log('BOT_ENGINEER_CODE не задан — подписка инженеров на уведомления выключена.');
 if (planfixConfigured) await loadFields();
 if (yt.youtrackConfigured) await yt.loadProject().catch((e) => console.error('YouTrack недоступен при старте:', e.message));
 await registerCommands();
