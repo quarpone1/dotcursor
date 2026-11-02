@@ -1,4 +1,5 @@
-// Частный реестр клиник. Телефоны не попадают в Git, логи и карточки заявок.
+// Частный реестр клиник. Телефоны не попадают в Git и логи; подтверждённый
+// телефон используется как контакт заявителя в его задаче.
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -43,7 +44,7 @@ export class ClinicUsers {
    if(!phone||!CLINICS.includes(r.clinic))throw Error('Некорректная запись в реестре клиник');
    const key=digest(phone),old=this.rows.get(key);
    if(old&&old.clinic!==r.clinic)throw Error('Один телефон привязан к разным клиникам');
-   this.rows.set(key,{clinic:r.clinic,name:r.name||''});
+   this.rows.set(key,{clinic:r.clinic,name:r.name||'',phone});
   }
   try{this.bindings=JSON.parse(await readFile(this.stateFile,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}
   this.enabled=true;

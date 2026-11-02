@@ -208,7 +208,6 @@ try {
   await post(msg('Ошибка драйвера'));
   await post(msg('Чек печатается'));
   await post(btn('c:urgency:0'));
-  await post(msg('+7 900 000-00-00'));
   await post(btn('files:done'));
   await post(btn('ok:send'));
   await sleep(400);
@@ -248,6 +247,7 @@ try {
   check('клиника и исполнитель по клинике (МедГород → deravchuk)', ytf['Клиника'] === 'МедГород' && ytf['Разработчик'] === 'deravchuk', JSON.stringify(ytf));
   check('тип и приоритет', ytf.Type === 'Bug' && ytf['Тип заявки'] === 'Ошибка' && ytf.Priority === 'Critical', JSON.stringify(ytf));
   check('описание — та же карточка заявки', /Не печатается чек/.test(ytIssues[0]?.description || ''));
+  check('контакт из MAX подставлен в YouTrack и Planfix', ytf['Контакт заявителя'] === `MAX: Дмитрий Серов (ID: ${USER})` && taskCreated.description.includes(`MAX: Дмитрий Серов (ID: ${USER})`), JSON.stringify(ytf['Контакт заявителя']));
 
   console.log('\n2. Инженер пишет ВНУТРЕННИЙ комментарий');
   comments = [{
@@ -441,7 +441,7 @@ try {
   await post(msg2('Добавить кнопку печати чека повторно'));
   await post(msg2('На экране кассы кнопка «Повторить чек» рядом с «Печать»'));
   await post(msg2('Сейчас переоткрываем смену, теряем время'));
-  await post(btn2('c:urgency:2')); await post(msg2('+7 900 111-22-33')); await post(btn2('files:done'));
+  await post(btn2('c:urgency:2')); await post(btn2('files:done'));
   await post(btn2('ok:send'));
   await sleep(300);
   check('во время паузы задача не создавалась', tasksCreated === createdBefore, String(tasksCreated - createdBefore));
@@ -498,7 +498,7 @@ try {
   await post(btn3('c:kind:0')); await post(btn3('c:clinic:1')); await post(btn3('c:module:0')); await post(btn3('c:role:0'));
   await post(msg3('Иванова А. А. / логин 5')); await post(btn3('skip'));
   await post(msg3('Не открывается расписание')); await post(msg3('1. Открыть расписание')); await post(msg3('Белый экран')); await post(msg3('Расписание'));
-  await post(btn3('c:urgency:1')); await post(msg3('+7 900 222-33-44')); await post(btn3('files:done'));
+  await post(btn3('c:urgency:1')); await post(btn3('files:done'));
   await post(btn3('ok:send'));
   await sleep(400);
   check('задача в Planfix создана несмотря на сбой YouTrack', tasksCreated === pfBefore10 + 1, String(tasksCreated - pfBefore10));

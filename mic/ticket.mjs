@@ -178,7 +178,7 @@ export function ticketText({ ticketNo, link = null, fields: f, files = [], folde
   lines.push(
     '',
     `Срочность (заявитель): ${f.urgency}`,
-    `Контакт: ${f.contact}`,
+    `Контакт: ${f.contact || 'не указан'}`,
     '',
     files.length ? `Вложения (${files.length}):` : 'Вложения: нет',
     ...files.map((x) => `  · ${x.name}${x.size ? ` — ${(x.size / 1048576).toFixed(1)} МБ` : ''}`),

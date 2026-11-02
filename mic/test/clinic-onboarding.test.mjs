@@ -33,6 +33,15 @@ try{
  await post(cb('c:kind:0'));assert(sent.some(x=>/В каком модуле/.test(x.text)));assert(!sent.some(x=>/Из какой вы клиники/.test(x.text)));
  await stop();await launch();await post(cb('nav:cancel'));await post(msg('заявка'));assert(!JSON.stringify(sent).includes('request_contact'));
  await post(cb('c:kind:0'));assert(sent.some(x=>/В каком модуле/.test(x.text)));
+ await post(cb('c:module:0'));await post(cb('c:role:0'));
+ await post(msg('Тестовый врач / логин 123'));await post(cb('skip'));
+ await post(msg('Тестовая ошибка'));await post(msg('Открыть карту и нажать кнопку'));
+ await post(msg('Ошибка'));await post(msg('Открывается карта'));
+ await post(cb('c:urgency:1'));
+ assert(sent.some(x=>/Приложите/.test(x.text)));
+ assert(!sent.some(x=>/Как с вами связаться/.test(x.text)));
+ await post(cb('files:done'));
+ assert(sent.some(x=>x.text.includes('Контакт: Телефон: +79001112233 · MAX: Тест (ID: 123)')));
  assert(!logs.includes('79001112233'));
  console.log('Вебхук: контакт, подпись, ограничения клиники, автоматический выбор, перезапуск — OK');
 }finally{await stop();await new Promise(r=>server.close(r));await rm(dir,{recursive:true,force:true});}

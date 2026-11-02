@@ -13,7 +13,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MaxApi, parseUpdate, withExtension, uniqueNames } from './max-api.mjs';
-import { createSession, start, handle, summary } from './dialog.mjs';
+import { createSession, start, handle, summary, setAutomaticContact } from './dialog.mjs';
 import { createTask, findContact, taskName, planfixConfigured,
          uploadFile, newComments, addressedToContact, createContact,
          addComment, isOwnComment, FROM_MAX_MARK, downloadFile, loadFields,
@@ -21,6 +21,7 @@ import { createTask, findContact, taskName, planfixConfigured,
 import { priorityOf, ticketText } from '../ticket.mjs';
 import * as yt from './youtrack.mjs';
 import { ClinicUsers } from './clinic-users.mjs';
+import { accountContact } from './user-contact.mjs';
 import { Engineers, parseCommand as engineerCommand, engineersEnabled } from './engineers.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -279,6 +280,7 @@ async function createPlanfixTask(session) {
       userId: session.user?.id,
       chatId: session.chatId || null,
       contactId: contact?.id || null,
+      userContact: session.answers.contact || null,
       lastCommentId: 0,
       createdAt: Date.now(),
       lastActivity: Date.now(),
@@ -1032,7 +1034,8 @@ export async function dispatch(update) {
 
     replies.delete(ev.userId);   // новая заявка закрывает режим ответа
     await saveReplies();
-    const fresh = createSession({ id: ev.userId, name: ev.userName });
+    const sender = update.callback?.user || update.message?.sender || update.user || {};
+    const fresh = createSession({ id: ev.userId, name: ev.userName, username: sender.username || null });
     fresh.chatId = ev.chatId || null;
     if (profile) {
       fresh.lockedClinic = profile.clinic;
@@ -1040,6 +1043,7 @@ export async function dispatch(update) {
     } else if (clinicUsers.enabled && !engineers.byUserId(ev.userId)) {
       fresh.allowedClinics = clinicUsers.manualClinics();
     }
+    setAutomaticContact(fresh, accountContact(fresh.user, profile));
     fresh.pendingAttachments = [];
     sessions.set(ev.userId, fresh);
     await saveStateSoon();
@@ -1059,6 +1063,21 @@ export async function dispatch(update) {
     sessions.delete(ev.userId);
     await saveStateSoon();
     await reply(ev, [contactPrompt('Мы подключили определение клиники по телефону. Подтвердите контакт и начните заявку заново.')]);
+    return;
+  }
+
+  // Восстановленные диалоги тоже переходят на автоматический контакт.
+  const sender = update.callback?.user || update.message?.sender || update.user || {};
+  session.user = { ...session.user, id: ev.userId,
+    name: ev.userName || session.user?.name,
+    username: sender.username || session.user?.username || null };
+  const skippedContact = setAutomaticContact(session, accountContact(session.user, profile));
+  if (skippedContact) {
+    if (ev.callbackId) await api.answerCallback(ev.callbackId).catch(() => {});
+    await saveStateSoon();
+    const messages = session.phase === 'confirm'
+      ? handle(session, {type:'callback',payload:'ok:back'}).replies : start(session);
+    await reply(ev, [{text:'Контакт теперь заполняется автоматически из вашего аккаунта MAX.',buttons:[]}, ...messages]);
     return;
   }
 

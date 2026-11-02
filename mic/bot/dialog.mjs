@@ -104,7 +104,7 @@ const stepById = (id) => STEPS.find((s) => s.id === id);
 
 /** Шаги, которые применимы при текущих ответах. */
 export function activeSteps(session) {
-  return STEPS.filter((s) => !(s.id === 'clinic' && session.lockedClinic) && (!s.when || s.when(session.answers)));
+  return STEPS.filter((s) => !(s.id === 'clinic' && session.lockedClinic) && !(s.id === 'contact' && session.autoContact) && (!s.when || s.when(session.answers)));
 }
 
 const currentStep = (session) =>
@@ -124,6 +124,24 @@ export function createSession(user = {}) {
     phase: 'ask',         // ask → confirm → done | cancelled
     editing: null,        // id шага, если правим одно поле из подтверждения
   };
+}
+
+/** Подставляет контакт без потери позиции незаконченного диалога. */
+export function setAutomaticContact(session, contact) {
+  const before = currentStep(session);
+  const previousIndex = session.stepIndex;
+  const wasContact = before?.id === 'contact';
+  session.autoContact = contact;
+  session.answers.contact = contact;
+  if (session.editing === 'contact') {
+    session.editing = null;
+    session.phase = 'confirm';
+  } else if (!session.editing) {
+    const steps = activeSteps(session);
+    const index = steps.findIndex(s => s.id === before?.id);
+    session.stepIndex = index >= 0 ? index : Math.min(previousIndex, steps.length - 1);
+  }
+  return wasContact;
 }
 
 /* ---------- отрисовка вопросов ---------- */
@@ -234,6 +252,7 @@ export function start(session) {
 export function handle(session, input) {
   const replies = [];
   if (session.lockedClinic) session.answers.clinic = session.lockedClinic;
+  if (session.autoContact) session.answers.contact = session.autoContact;
   const out = () => ({ replies, done: session.phase === 'done', cancelled: session.phase === 'cancelled' });
 
   if (session.phase === 'done' || session.phase === 'cancelled') {
@@ -299,7 +318,7 @@ export function handle(session, input) {
 
     if (p.startsWith('edit:')) {
       const id = p.slice(5);
-      if (!stepById(id) || (id === 'clinic' && session.lockedClinic)) { replies.push(editMenu(session)); return out(); }
+      if (!stepById(id) || (id === 'clinic' && session.lockedClinic) || (id === 'contact' && session.autoContact)) { replies.push(editMenu(session)); return out(); }
       session.editing = id;
       session.phase = 'ask';
       replies.push(askMessage(session));

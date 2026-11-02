@@ -170,8 +170,8 @@ function parseUpdateKind(u) {
     u?.callback?.user?.user_id ?? msg?.sender?.user_id ?? u?.user?.user_id ?? u?.user_id ?? null;
   const chatId =
     msg?.recipient?.chat_id ?? u?.chat_id ?? u?.chatId ?? null;
-  const userName =
-    u?.callback?.user?.name ?? msg?.sender?.name ?? u?.user?.name ?? null;
+  const actor = u?.callback?.user ?? msg?.sender ?? u?.user;
+  const userName = actor?.name || [actor?.first_name, actor?.last_name].filter(Boolean).join(' ') || null;
 
   if (type === 'message_callback') {
     return {

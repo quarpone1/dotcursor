@@ -122,7 +122,6 @@ try {
   await post(msg('Ошибка драйвера'));
   await post(msg('Чек печатается'));
   await post(btn('c:urgency:0'));
-  await post(msg('+7 900 000-00-00'));
   check('дошли до вложений', /Приложите/.test(lastText()), lastText().slice(0, 60));
   check('за весь опрос в Planfix по-прежнему пусто', forwarded.length === 0,
     `ушло ${forwarded.length}`);
@@ -144,7 +143,7 @@ try {
   const card = cards[0]?.message?.body?.text || '';
   check('в пакете все ответы разом',
     /Клиника: МедГород/.test(card) && /Модуль: ЭМК/.test(card) &&
-    /Не печатается чек/.test(card) && /Ошибка драйвера/.test(card) && /\+7 900/.test(card),
+    /Не печатается чек/.test(card) && /Ошибка драйвера/.test(card) && card.includes(`Контакт: MAX: Иванов (ID: ${USER})`),
     card.slice(0, 80));
   check('пакет отправлен ОТ ИМЕНИ ПОЛЬЗОВАТЕЛЯ, а не бота',
     cards[0]?.update_type === 'message_created' && cards[0]?.message?.sender?.user_id === USER,
