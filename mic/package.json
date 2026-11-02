@@ -29,7 +29,9 @@
     "youtrack:test": "node test/youtrack.test.mjs",
     "youtrack:setup": "node --env-file-if-exists=.env tools/youtrack-setup.mjs",
     "files:test": "node test/files.test.mjs",
-    "engineers:test": "node test/engineers.test.mjs"
+    "engineers:test": "node test/engineers.test.mjs",
+    "clinic-users:test": "node test/clinic-users.test.mjs",
+    "clinic-onboarding:test": "node test/clinic-onboarding.test.mjs"
   },
   "dependencies": {
     "nodemailer": "^7.0.9"

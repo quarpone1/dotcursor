@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ClinicUsers, normalizePhone, verifiedPhone } from '../bot/clinic-users.mjs';
+import { createSession, activeSteps, handle } from '../bot/dialog.mjs';
+import { MaxApi } from '../bot/max-api.mjs';
+const token='fixture-token',vcf='BEGIN:VCARD\r\nVERSION:3.0\r\nTEL;TYPE=cell:+7 (900) 111-22-33\r\nEND:VCARD\r\n';
+const contact={type:'contact',payload:{vcf_info:vcf,hash:createHmac('sha256',token).update(vcf).digest('hex'),max_info:{user_id:123}}};
+const event={message:{sender:{user_id:123},body:{attachments:[contact]}}};
+assert.equal(normalizePhone('8 (900) 111-22-33'),'79001112233');
+assert.equal(verifiedPhone(event,token),'79001112233');
+assert.equal(verifiedPhone(event,'wrong'),null);
+assert.equal(verifiedPhone({...event,message:{...event.message,link:{type:'forward'}}},token),null);
+assert.equal(verifiedPhone({message:{sender:{user_id:456},body:{attachments:[contact]}}},token),null);
+assert.equal(verifiedPhone({message:{sender:{user_id:123},body:{attachments:[{...contact,payload:{vcf_info:vcf}}]}}},token),null);
+const dir=await mkdtemp(join(tmpdir(),'mic-users-'));
+try {
+ const roster=join(dir,'roster.json'),state=join(dir,'bindings.json');
+ await writeFile(roster,JSON.stringify([{phone:'89001112233',clinic:'ДОКТОР МИРА',name:'Тест'}]));
+ const users=new ClinicUsers(roster,state,token);await users.load();
+ assert.equal(users.enabled,true);assert.equal(users.manualClinics().includes('ДОКТОР МИРА'),false);
+ assert.equal((await users.identify(event)).clinic,'ДОКТОР МИРА');
+ const reload=new ClinicUsers(roster,state,token);await reload.load();assert.equal(reload.byUserId(123).clinic,'ДОКТОР МИРА');
+ await writeFile(roster,JSON.stringify([{phone:'89001112233',clinic:'МедГород',name:'Тест'}]));await reload.load();assert.equal(reload.byUserId(123).clinic,'МедГород');
+ const s=createSession({id:123});s.lockedClinic='ДОКТОР МИРА';s.answers.clinic=s.lockedClinic;
+ assert(!activeSteps(s).some(x=>x.id==='clinic'));
+ handle(s,{type:'callback',payload:'c:kind:0'});assert.equal(activeSteps(s)[s.stepIndex].id,'module');
+ handle(s,{type:'callback',payload:'c:clinic:0'});assert.equal(s.answers.clinic,'ДОКТОР МИРА');
+ handle(s,{type:'callback',payload:'edit:clinic'});assert.equal(s.editing,null);
+ const manual=createSession();manual.allowedClinics=['Нигинского'];
+ handle(manual,{type:'callback',payload:'c:kind:0'});
+ handle(manual,{type:'callback',payload:'c:clinic:0'});assert.equal(manual.answers.clinic,undefined);
+ assert.deepEqual(MaxApi.keyboard([[{type:'request_contact',text:'Поделиться'}]])[0].payload.buttons[0][0],{type:'request_contact',text:'Поделиться'});
+ console.log('Контакты: подпись, чужой/пересланный контакт, сохранение, отзыв, закреплённая клиника — OK');
+} finally {await rm(dir,{recursive:true,force:true});}

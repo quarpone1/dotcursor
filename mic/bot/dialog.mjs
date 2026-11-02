@@ -104,7 +104,7 @@ const stepById = (id) => STEPS.find((s) => s.id === id);
 
 /** Шаги, которые применимы при текущих ответах. */
 export function activeSteps(session) {
-  return STEPS.filter((s) => !s.when || s.when(session.answers));
+  return STEPS.filter((s) => !(s.id === 'clinic' && session.lockedClinic) && (!s.when || s.when(session.answers)));
 }
 
 const currentStep = (session) =>
@@ -137,7 +137,8 @@ function keyboardFor(step, session) {
     for (let i = 0; i < step.options.length; i += short ? 2 : 1) {
       rows.push(
         step.options.slice(i, i + (short ? 2 : 1))
-          .map((_, j) => ({ text: labels[i + j], payload: `c:${step.id}:${i + j}` })),
+          .map((_, j) => ({ text: labels[i + j], payload: `c:${step.id}:${i + j}` }))
+          .filter((b) => step.id !== 'clinic' || !session.allowedClinics || session.allowedClinics.includes(step.options[Number(b.payload.split(':')[2])])),
       );
     }
   }
@@ -232,6 +233,7 @@ export function start(session) {
  */
 export function handle(session, input) {
   const replies = [];
+  if (session.lockedClinic) session.answers.clinic = session.lockedClinic;
   const out = () => ({ replies, done: session.phase === 'done', cancelled: session.phase === 'cancelled' });
 
   if (session.phase === 'done' || session.phase === 'cancelled') {
@@ -278,6 +280,10 @@ export function handle(session, input) {
       const [, stepId, idx] = p.split(':');
       const step = stepById(stepId);
       const value = step?.options?.[Number(idx)];
+      if (stepId === 'clinic' && (session.lockedClinic || (session.allowedClinics && !session.allowedClinics.includes(value)))) {
+        replies.push({ text: 'Клиника закреплена за вашим подтверждённым контактом либо требует подтверждения телефона.', buttons: [] });
+        return out();
+      }
       if (!step || value === undefined) {
         replies.push({ text: 'Не понял выбор, попробуйте ещё раз.', buttons: [] });
         replies.push(askMessage(session));
@@ -293,7 +299,7 @@ export function handle(session, input) {
 
     if (p.startsWith('edit:')) {
       const id = p.slice(5);
-      if (!stepById(id)) { replies.push(editMenu(session)); return out(); }
+      if (!stepById(id) || (id === 'clinic' && session.lockedClinic)) { replies.push(editMenu(session)); return out(); }
       session.editing = id;
       session.phase = 'ask';
       replies.push(askMessage(session));
@@ -355,7 +361,7 @@ export function handle(session, input) {
 
   if (step.type === 'choice') {
     // человек мог написать название вместо нажатия кнопки — примем
-    const hit = step.options.find((o) => o.toLowerCase() === text.toLowerCase());
+    const hit = step.options.find((o) => o.toLowerCase() === text.toLowerCase() && (step.id !== 'clinic' || !session.allowedClinics || session.allowedClinics.includes(o)));
     if (!hit && !step.freeText) {
       replies.push({ text: 'Выберите вариант кнопкой ниже.', buttons: [] });
       replies.push(askMessage(session));

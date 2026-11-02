@@ -20,6 +20,7 @@ import { createTask, findContact, taskName, planfixConfigured,
          rateLimitSeconds, fieldsLoaded, changedTasksSince } from './planfix.mjs';
 import { priorityOf, ticketText } from '../ticket.mjs';
 import * as yt from './youtrack.mjs';
+import { ClinicUsers } from './clinic-users.mjs';
 import { Engineers, parseCommand as engineerCommand, engineersEnabled } from './engineers.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -70,6 +71,7 @@ if (MODE === 'webhook' && !PLANFIX_URL) {
 }
 
 const api = new MaxApi(TOKEN);
+const clinicUsers = new ClinicUsers(process.env.BOT_CLINIC_USERS_FILE, join(STATE_DIR, 'bot-clinic-bindings.json'), TOKEN);
 const sessions = new Map();   // userId -> session
 
 const START_RE = /^\/?(start|старт|начать|начало|заявка|новая заявка|help|помощь|\?)$/i;
@@ -941,6 +943,13 @@ async function onGroupEvent(ev) {
   else console.log(`Бот видит «${title || '?'}» (событие ${ev.type}): chat_id ${ev.chatId}`);
 }
 
+function contactPrompt(text = 'Чтобы определить вашу клинику, поделитесь своим номером через кнопку ниже. Это нужно только при первом обращении.') {
+  return { text, buttons: [
+    [{ type: 'request_contact', text: '📱 Поделиться своим контактом' }],
+    ...(clinicUsers.manualClinics().length ? [[{text:'Моей клиники ещё нет в списках',payload:'clinic:manual'}]] : []),
+  ] };
+}
+
 export async function dispatch(update) {
   const ev = parseUpdate(update);
   if (!ev.userId && !ev.chatId) return;
@@ -955,6 +964,28 @@ export async function dispatch(update) {
     return void (await onTake(ev, String(ev.payload).slice(5)));
   }
 
+  const hasContact = (update.message?.body?.attachments || []).some(a => a.type === 'contact');
+  if (clinicUsers.enabled && hasContact) {
+    const result = await clinicUsers.identify(update);
+    if (result.error) {
+      const text = result.error === 'unknown'
+        ? 'Ваш номер пока не внесён в список клиники. Обратитесь к ответственному за подключение пользователей.'
+        : result.error === 'bound'
+          ? 'Этот номер уже связан с другим аккаунтом MAX. Обратитесь к администратору.'
+          : 'Не удалось подтвердить ваш номер. Нажмите «Поделиться своим контактом» — номер текстом или контакт из телефонной книги не подходит.';
+      await reply(ev, [contactPrompt(text)]);
+      return;
+    }
+    // Первый контакт запускает новый диалог; вложением задачи он не становится.
+    sessions.delete(ev.userId);
+    ev.kind = 'start'; ev.attachments = []; ev.text = '';
+    await reply(ev, [{text: `Вы определены как пользователь клиники «${result.clinic}». В заявках она будет выбрана автоматически.`, buttons: []}]);
+  } else if (hasContact) {
+    await reply(ev, [{text: 'Подключение по телефону сейчас не настроено. Напишите «заявка».', buttons: MENU}]);
+    return;
+  }
+  const profile = clinicUsers.byUserId(ev.userId);
+  const manual = ev.kind === 'callback' && ev.payload === 'clinic:manual';
   const session = sessions.get(ev.userId);
 
   // Диалога нет. Два случая:
@@ -981,7 +1012,7 @@ export async function dispatch(update) {
     const isStart =
       ev.kind === 'start' ||
       !session ||                                   // первое обращение
-      payload === 'new:ticket' ||
+      payload === 'new:ticket' || manual ||
       (ev.kind === 'text' && START_RE.test(said));
 
     if (!isStart) {
@@ -994,10 +1025,21 @@ export async function dispatch(update) {
       return void (await reply(ev, [{ text: 'Что сделать?', buttons: MENU }]));
     }
 
+    if (clinicUsers.enabled && !profile && !manual && !engineers.byUserId(ev.userId)) {
+      await reply(ev, [contactPrompt()]);
+      return;
+    }
+
     replies.delete(ev.userId);   // новая заявка закрывает режим ответа
     await saveReplies();
     const fresh = createSession({ id: ev.userId, name: ev.userName });
     fresh.chatId = ev.chatId || null;
+    if (profile) {
+      fresh.lockedClinic = profile.clinic;
+      fresh.answers.clinic = profile.clinic;
+    } else if (clinicUsers.enabled && !engineers.byUserId(ev.userId)) {
+      fresh.allowedClinics = clinicUsers.manualClinics();
+    }
     fresh.pendingAttachments = [];
     sessions.set(ev.userId, fresh);
     await saveStateSoon();
@@ -1010,6 +1052,13 @@ export async function dispatch(update) {
       },
       ...start(fresh),
     ]);
+    return;
+  }
+
+  if (clinicUsers.enabled && !session.lockedClinic && !session.allowedClinics && !engineers.byUserId(ev.userId)) {
+    sessions.delete(ev.userId);
+    await saveStateSoon();
+    await reply(ev, [contactPrompt('Мы подключили определение клиники по телефону. Подтвердите контакт и начните заявку заново.')]);
     return;
   }
 
@@ -1173,6 +1222,8 @@ async function registerCommands() {
   console.error('Команды зарегистрировать не удалось — на работу бота это не влияет.');
 }
 
+await clinicUsers.load();
+if (clinicUsers.enabled) console.log(`Реестр клиник: ${clinicUsers.rows.size} пользователей, ${new Set([...clinicUsers.rows.values()].map(r => r.clinic)).size} клиник`);
 await loadState();
 await loadTickets();
 await loadReplies();

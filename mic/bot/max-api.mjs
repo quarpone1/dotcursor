@@ -63,7 +63,9 @@ export class MaxApi {
   static keyboard(rows) {
     if (!rows?.length) return [];
     const buttons = rows
-      .map((row) => row.map((b) => b.url
+      .map((row) => row.map((b) => b.type === 'request_contact'
+        ? { type: 'request_contact', text: b.text }
+        : b.url
         ? { type: 'link', text: b.text, url: b.url }
         : { type: 'callback', text: b.text, payload: b.payload }))
       .filter((row) => row.length);
