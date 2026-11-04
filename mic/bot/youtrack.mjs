@@ -1,6 +1,6 @@
 // Дубль заявки в YouTrack — второй трекер рядом с Planfix.
 //
-// Задача в проекте MIC с теми же полями, исполнитель — тот же инженер по
+// Задача в проекте клиники (или MIC в режиме single), исполнитель — тот же инженер по
 // клинике (поле «Разработчик»), файлы во вложениях. Видимость задачи
 // ограничена группой клиники и командой проекта: админ клиники видит в MIC
 // только своё. Номер задачи YouTrack становится номером заявки для человека. Обратно: комментарии
@@ -9,11 +9,19 @@
 // Всё, что здесь есть, проверено живьём на yt.medinfocenter.ru: создание с
 // полями, назначение, комментарии, вложения туда и обратно, запрос
 // «что изменилось с …». Суточной квоты, как у Planfix, у YouTrack нет.
-import { CLINIC_ENGINEER, CLINIC_GROUP, CLINIC_OBJECT, ENGINEER_LOGINS, KINDS, URGENCIES } from '../ticket.mjs';
+import { CLINIC_ENGINEER, CLINIC_PROJECT, CLINIC_GROUP, CLINIC_OBJECT, ENGINEER_LOGINS, KINDS, URGENCIES } from '../ticket.mjs';
 
 const BASE = (process.env.YOUTRACK_URL || '').replace(/\/+$/, '');
 const TOKEN = process.env.YOUTRACK_TOKEN;
 const PROJECT = process.env.YOUTRACK_PROJECT || 'MIC';
+const TIMEZONE = process.env.YOUTRACK_TIMEZONE || 'Asia/Yekaterinburg';
+export const clinicRouting = process.env.YOUTRACK_ROUTING === 'clinics';
+export const projectFor = clinic => {
+  if (!clinicRouting) return PROJECT;
+  const key = CLINIC_PROJECT[clinic];
+  if (!key) throw new Error(`YouTrack: для клиники «${clinic}» проект не настроен`);
+  return key;
+};
 
 export const youtrackConfigured = Boolean(BASE && TOKEN);
 
@@ -61,95 +69,126 @@ async function yt(method, path, { body, form, timeout = 30_000 } = {}) {
 
 /* ---------- проект ---------- */
 
-let projectId = null;
-let teamGroupId = null;          // команда проекта — ей видны все задачи
-const groupIds = new Map();      // имя группы → id (для видимости по клинике)
-let monthBundleId = null;        // список значений «Месяц создания»
-const knownMonths = new Set();
-const enumValues = new Map();    // имя поля-списка → Set допустимых значений
+const contexts = new Map();
+const bundles = new Map();
+const monthWrites = new Map();
+const groupIds = new Map();
+
+async function bundleValues(kind, id) {
+  const key = `${kind}:${id}`;
+  if (!bundles.has(key)) {
+    const promise = yt('GET', `/admin/customFieldSettings/bundles/${kind}/${id}/values?fields=name,archived&$top=1000`);
+    bundles.set(key, promise);
+    promise.catch(() => bundles.delete(key));
+  }
+  return bundles.get(key);
+}
 
 export async function loadProject() {
   if (!youtrackConfigured) return null;
-  const list = await yt('GET', `/admin/projects?fields=id,shortName,name,team(id,name)&query=${encodeURIComponent(PROJECT)}`);
-  const p = (list || []).find((x) => x.shortName === PROJECT) || (list || [])[0];
-  if (!p) throw new Error(`YouTrack: проект «${PROJECT}» не найден`);
-  projectId = p.id;
-  teamGroupId = p.team?.id || null;
-  console.log(`YouTrack: проект ${p.shortName} «${p.name}» (${p.id})`);
-  await loadGroups(p).catch((e) => console.error(`YouTrack: группы не прочитались (${e.message}) — задачи будут без ограничения видимости.`));
-  await loadBundles().catch((e) => console.error(`YouTrack: списки значений не прочитались (${e.message}).`));
-  return p;
-}
-
-/** Группы клиник и команда проекта — для ограничения видимости задач. */
-async function loadGroups(project) {
-  const list = await yt('GET', '/groups?fields=id,name&$top=500');
-  groupIds.clear();
-  for (const g of list || []) groupIds.set(g.name, g.id);
-  if (!teamGroupId) teamGroupId = groupIds.get(`${project.name} Team`) || null;
-  const missing = Object.values(CLINIC_GROUP).filter((n) => !groupIds.has(n));
-  console.log(`YouTrack: групп клиник ${Object.keys(CLINIC_GROUP).length - missing.length}/${Object.keys(CLINIC_GROUP).length}` +
-    `${missing.length ? `, нет: ${missing.join(', ')}` : ''}; команда ${teamGroupId ? 'найдена' : 'НЕ найдена'}`);
-}
-
-/**
- * Списки значений полей проекта: «Месяц создания» (чтобы добавлять новый месяц)
- * и списочные поля (чтобы не отправлять значение, которого в проекте нет —
- * YouTrack на это отвечает ошибкой без имени поля).
- */
-async function loadBundles() {
-  const fields = await yt('GET', `/admin/projects/${projectId}/customFields?fields=$type,field(name),bundle(id)&$top=100`);
-  enumValues.clear();
-  for (const f of fields || []) {
-    const name = f.field?.name; const bundle = f.bundle?.id;
-    if (!name || !bundle) continue;
-    if (name === 'Месяц создания' && f.$type === 'VersionProjectCustomField') {
-      monthBundleId = bundle;
-      const vals = await yt('GET', `/admin/customFieldSettings/bundles/version/${bundle}/values?fields=name&$top=500`);
-      knownMonths.clear();
-      for (const v of vals || []) knownMonths.add(v.name);
-    } else if (f.$type === 'EnumProjectCustomField') {
-      const vals = await yt('GET', `/admin/customFieldSettings/bundles/enum/${bundle}/values?fields=name,archived&$top=500`);
-      enumValues.set(name, new Set((vals || []).filter((v) => !v.archived).map((v) => v.name)));
-    }
+  const wanted = clinicRouting ? [...new Set(Object.values(CLINIC_PROJECT))] : [PROJECT];
+  const list = await yt('GET', `/admin/projects?fields=id,shortName,name,archived,team(id,name)&$top=500${clinicRouting ? '' : `&query=${encodeURIComponent(PROJECT)}`}`);
+  const missing = wanted.filter(key => !list.some(p => p.shortName === key && !p.archived));
+  if (missing.length) throw new Error(`YouTrack: недоступны проекты ${missing.join(', ')}`);
+  // Сначала валидируем весь список — при ошибке не переключаемся на случайный проект.
+  if (!clinicRouting) {
+    const groups = await yt('GET', '/groups?fields=id,name&$top=500').catch(() => []);
+    for (const g of groups || []) groupIds.set(g.name, g.id);
   }
-  const empty = [...enumValues].filter(([, set]) => !set.size).map(([n]) => n);
-  console.log(`YouTrack: списков значений ${enumValues.size}${empty.length ? `, пустые: ${empty.join(', ')}` : ''}; месяцев ${knownMonths.size}`);
+  const loaded = new Map();
+  for (const key of wanted) {
+    const p = list.find(p => p.shortName === key);
+    const ctx = { ...p, fields: new Set(), enumValues: new Map(), knownMonths: new Set(), monthBundleId: null,
+      teamGroupId: p.team?.id || groupIds.get(`${p.name} Team`) || null };
+    const fields = await yt('GET', `/admin/projects/${p.id}/customFields?fields=$type,field(name),bundle(id)&$top=100`);
+    for (const f of fields || []) {
+      const name = f.field?.name, id = f.bundle?.id;
+      if (!name) continue;
+      ctx.fields.add(name);
+      if (name === 'Месяц создания' && f.$type === 'VersionProjectCustomField' && id) {
+        ctx.monthBundleId = id;
+        for (const v of await bundleValues('version', id)) ctx.knownMonths.add(v.name);
+      } else if (f.$type === 'EnumProjectCustomField' && id) {
+        ctx.enumValues.set(name, new Set((await bundleValues('enum', id)).filter(v => !v.archived).map(v => v.name)));
+      }
+    }
+    if (clinicRouting && !ctx.fields.has('Разработчик')) throw new Error(`YouTrack: в ${key} нет поля «Разработчик»`);
+    loaded.set(key, ctx);
+  }
+  contexts.clear();
+  for (const [key, ctx] of loaded) contexts.set(key, ctx);
+  console.log(`YouTrack: ${clinicRouting ? 'проекты клиник' : 'проект'} ${wanted.join(', ')}`);
+  if (!clinicRouting) {
+    const ctx = contexts.get(PROJECT);
+    console.log(`YouTrack: групп клиник ${Object.values(CLINIC_GROUP).filter(n => groupIds.has(n)).length}/${Object.keys(CLINIC_GROUP).length}; команда ${ctx.teamGroupId ? 'найдена' : 'НЕ найдена'}`);
+    console.log(`YouTrack: списков значений ${ctx.enumValues.size}; месяцев ${ctx.knownMonths.size}`);
+  }
+  return contexts.get(wanted[0]);
 }
 
-/** Значение есть в списке поля? Если список не читали — считаем, что есть (решит сервер). */
-const valueKnown = (field, value) => !enumValues.has(field) || enumValues.get(field).has(value);
+async function contextFor(clinic) {
+  const key = projectFor(clinic);
+  if (!contexts.has(key)) await loadProject();
+  const ctx = contexts.get(key);
+  if (!ctx) throw new Error(`YouTrack: проект ${key} недоступен`);
+  return ctx;
+}
+const valueKnown = (ctx, field, value) => !ctx.enumValues.has(field) || ctx.enumValues.get(field).has(value);
 
-/** «2026.10» — месяц оформления заявки, как заведено в YouTrack. */
 export function monthOf(ms = Date.now()) {
-  const d = new Date(ms);
-  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const p = dateParts(ms);
+  return `${p.year}.${p.month}`;
 }
-
-/** Добавляет месяц в список «Месяц создания», если его там ещё нет. */
-export async function ensureMonth(name) {
-  if (knownMonths.has(name)) return true;
-  if (!monthBundleId) return false;
-  try {
-    await yt('POST', `/admin/customFieldSettings/bundles/version/${monthBundleId}/values?fields=id,name`, { body: { name, $type: 'VersionBundleElement' } });
-    knownMonths.add(name);
-    console.log(`YouTrack: в «Месяц создания» добавлен ${name}`);
+export async function ensureMonth(name, ctx = contexts.get(PROJECT)) {
+  if (!ctx) return false;
+  if (ctx.knownMonths.has(name)) return true;
+  if (!ctx.monthBundleId) return false;
+  const key = `${ctx.monthBundleId}:${name}`;
+  if (!monthWrites.has(key)) monthWrites.set(key, (async () => {
+    try {
+      await yt('POST', `/admin/customFieldSettings/bundles/version/${ctx.monthBundleId}/values?fields=id,name`, { body: { name, $type: 'VersionBundleElement' } });
+    } catch (err) {
+      if (!/already exists|уже существует/i.test(String(err.detail || ''))) throw err;
+    }
+    for (const c of contexts.values()) if (c.monthBundleId === ctx.monthBundleId) c.knownMonths.add(name);
+    bundles.delete(`version:${ctx.monthBundleId}`);
     return true;
-  } catch (err) {
-    if (/already exists|уже существует/i.test(String(err.detail || ''))) { knownMonths.add(name); return true; }
+  })());
+  try { return await monthWrites.get(key); }
+  catch (err) {
+    monthWrites.delete(key);
     console.error(`YouTrack: не удалось добавить месяц ${name}: ${err.message}`);
+    if (clinicRouting) throw err;
     return false;
   }
 }
 
-/** Видимость задачи: группа клиники + команда проекта. null — ограничить нечем. */
+// В отдельных проектах изоляцию задают права проекта. Ограничение группами MIC не переносим в новые задачи.
 export function visibilityFor(clinic) {
-  const groups = [];
-  const g = groupIds.get(CLINIC_GROUP[clinic]);
-  if (g) groups.push({ id: g });
-  if (teamGroupId) groups.push({ id: teamGroupId });
-  if (!g) return null;   // без группы клиники ограничивать нельзя: команда и так всё видит, а клиент не увидит ничего
-  return { $type: 'LimitedVisibility', permittedGroups: groups, permittedUsers: [] };
+  if (clinicRouting) return null;
+  const ctx = contexts.get(PROJECT), g = groupIds.get(CLINIC_GROUP[clinic]);
+  if (!g) return null;
+  return { $type: 'LimitedVisibility', permittedGroups: [{ id: g }, ...(ctx?.teamGroupId ? [{ id: ctx.teamGroupId }] : [])], permittedUsers: [] };
+}
+
+export async function issueInfo(id) {
+  const i = await yt('GET', `/issues/${encodeURIComponent(id)}?fields=id,idReadable,project(id,shortName),visibility($type,permittedGroups(id,name),permittedUsers(id)),customFields(name,value(name))`);
+  return { id: i.id, key: i.idReadable, project: i.project?.shortName, visibility: i.visibility,
+    clinic: i.customFields?.find(f => f.name === 'Клиника')?.value?.name || Object.keys(CLINIC_PROJECT).find(c => CLINIC_PROJECT[c] === i.project?.shortName) || null };
+}
+export async function moveIssue(id, clinic) {
+  const ctx = await contextFor(clinic);
+  await yt('POST', `/issues/${encodeURIComponent(id)}?fields=id`, { body: { project: { id: ctx.id } } });
+  return issueInfo(id);
+}
+
+/** Убирает только старую машинную видимость MIC после переноса в проект клиники. */
+export async function clearLegacyVisibility(info, clinic) {
+  const v=info.visibility, names=(v?.permittedGroups || []).map(g => g.name);
+  if (!clinicRouting || info.project !== projectFor(clinic) || v?.$type !== 'LimitedVisibility' || v.permittedUsers?.length) return false;
+  if (!names.includes('Сопровождение МИЦ Team') || names.some(n => !['Сопровождение МИЦ Team',CLINIC_GROUP[clinic]].includes(n))) return false;
+  await yt('POST', `/issues/${info.id}?fields=id`, {body:{visibility:{$type:'UnlimitedVisibility'}}});
+  return true;
 }
 
 /* ---------- поля ---------- */
@@ -161,9 +200,9 @@ const PRIORITY_BY_URGENCY = { [URGENCIES[0]]: 'Critical', [URGENCIES[1]]: 'Major
 const ENUM = (name, value) => ({ name, $type: 'SingleEnumIssueCustomField', value: { name: value } });
 const MULTI = (name, value) => ({ name, $type: 'MultiEnumIssueCustomField', value: [{ name: value }] });
 // Списочное поле только с известным значением; иначе предупреждение и без поля.
-const pushEnum = (out, make, name, value) => {
+const pushEnum = (ctx, out, make, name, value) => {
   if (!value) return;
-  if (valueKnown(name, value)) out.push(make(name, value));
+  if (valueKnown(ctx, name, value)) out.push(make(name, value));
   else console.error(`YouTrack: в поле «${name}» нет значения «${value}» — поле не заполняю.`);
 };
 const VERSION = (name, value) => ({ name, $type: 'SingleVersionIssueCustomField', value: { name: value } });
@@ -175,17 +214,18 @@ export function assigneeFor(clinic) {
   return pf ? ENGINEER_LOGINS[pf] || null : null;
 }
 
-function customFields(f, month) {
+function customFields(f, month, ctx) {
   const out = [];
   const isBug = !f.kind || f.kind === KINDS[0];
-  pushEnum(out, ENUM, 'Клиника', f.clinic);
+  pushEnum(ctx, out, ENUM, 'Клиника', f.clinic);
   const obj = CLINIC_OBJECT[f.clinic];
-  pushEnum(out, MULTI, 'Объект', obj);
-  if (isBug) pushEnum(out, MULTI, 'Где выявлено', obj);
-  pushEnum(out, ENUM, 'Тип заявки', f.kind);
-  pushEnum(out, ENUM, 'Type', TYPE_BY_KIND[f.kind]);
-  pushEnum(out, ENUM, 'Срочность', f.urgency);
-  pushEnum(out, ENUM, 'Priority', PRIORITY_BY_URGENCY[f.urgency]);
+  pushEnum(ctx, out, MULTI, 'Объект', obj);
+  if (isBug) pushEnum(ctx, out, MULTI, 'Где выявлено', obj);
+  else if (clinicRouting) out.push({name:'Где выявлено',$type:'MultiEnumIssueCustomField',value:[]});
+  pushEnum(ctx, out, ENUM, 'Тип заявки', f.kind);
+  pushEnum(ctx, out, ENUM, 'Type', TYPE_BY_KIND[f.kind]);
+  pushEnum(ctx, out, ENUM, 'Срочность', f.urgency);
+  pushEnum(ctx, out, ENUM, 'Priority', PRIORITY_BY_URGENCY[f.urgency]);
   if (month) out.push(VERSION('Месяц создания', month));
   if (f.module) out.push(TEXT('Модуль', f.module));
   if (f.role) out.push(TEXT('Роль', f.role));
@@ -194,7 +234,7 @@ function customFields(f, month) {
   out.push(TEXT('Источник', 'бот MAX'));
   const login = assigneeFor(f.clinic);
   if (login) out.push({ name: 'Разработчик', $type: 'SingleUserIssueCustomField', value: { login } });
-  return out;
+  return clinicRouting ? out.filter(f => ctx.fields.has(f.name)) : out;
 }
 
 /* ---------- задачи ---------- */
@@ -205,18 +245,18 @@ function customFields(f, month) {
  * @returns {{id:string, key:string}}  внутренний id и читаемый номер (MIC-12)
  */
 export async function createIssue({ summary, description, fields, createdAt = Date.now() }) {
-  if (!projectId) await loadProject();
+  const ctx = await contextFor(fields?.clinic);
   const month = monthOf(createdAt);
-  const monthOk = await ensureMonth(month);
+  const monthOk = await ensureMonth(month, ctx);
   const body = {
-    project: { id: projectId },
+    project: { id: ctx.id },
     summary: String(summary).slice(0, 250),
     description,
-    customFields: customFields(fields || {}, monthOk ? month : null),
+    customFields: customFields(fields || {}, monthOk ? month : null, ctx),
   };
   const visibility = visibilityFor(fields?.clinic);
   if (visibility) body.visibility = visibility;
-  else if (fields?.clinic) console.error(`YouTrack: для «${fields.clinic}» нет группы клиентов — задача без ограничения видимости.`);
+  else if (!clinicRouting && fields?.clinic) console.error(`YouTrack: для «${fields.clinic}» нет группы клиентов — задача без ограничения видимости.`);
   for (let attempt = 0; attempt < 12; attempt++) {
     try {
       const res = await yt('POST', '/issues?fields=id,idReadable', { body });
@@ -236,6 +276,7 @@ export async function createIssue({ summary, description, fields, createdAt = Da
       const bad = m[1];
       const hasValue = (f, name) => Array.isArray(f.value) ? f.value.some((v) => v?.name === name) : f.value?.name === name;
       const badValue = noValue && body.customFields.find((f) => hasValue(f, noValue[1]));
+      if (clinicRouting && (bad === 'Разработчик' || (!bad && !badValue))) throw err;
       if (bad) {
         console.error(`YouTrack отверг поле «${bad}» — создаю без него.`);
         body.customFields = body.customFields.filter((f) => f.name !== bad);
@@ -308,17 +349,29 @@ export async function downloadAttachment(url) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-const pad = (n) => String(n).padStart(2, '0');
+const dateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+const dateParts = ms => Object.fromEntries(dateFormatter.formatToParts(new Date(ms)).map(p => [p.type,p.value]));
 export function ytDateTime(ms) {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const p = dateParts(ms);
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
 }
 
 /** Задачи проекта, менявшиеся после `sinceMs`. Один запрос на все задачи разом. */
 export async function changedIssuesSince(sinceMs) {
-  const q = `project: ${PROJECT} updated: ${ytDateTime(sinceMs)} .. *`;
-  const list = await yt('GET', `/issues?query=${encodeURIComponent(q)}&fields=id&$top=500`);
-  return new Set((list || []).map((i) => i.id));
+  const projects = clinicRouting ? [...new Set(Object.values(CLINIC_PROJECT))] : [PROJECT];
+  const scope = `project: ${projects.join(', ')}`;
+  const q = `${scope} updated: ${ytDateTime(sinceMs)} .. *`;
+  const result = new Set();
+  result.details = new Map();
+  for (let offset = 0; ; offset += 500) {
+    const list = await yt('GET', `/issues?query=${encodeURIComponent(q)}&fields=id,idReadable,project(shortName)&$top=500&$skip=${offset}`);
+    for (const i of list || []) { result.add(i.id); result.details.set(i.id, i); }
+    if (!list || list.length < 500) break;
+  }
+  return result;
 }
 
 /** Ссылка на задачу для человека и логов. */

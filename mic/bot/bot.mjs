@@ -22,6 +22,7 @@ import { priorityOf, ticketText } from '../ticket.mjs';
 import * as yt from './youtrack.mjs';
 import { ClinicUsers } from './clinic-users.mjs';
 import { accountContact } from './user-contact.mjs';
+import { updateTicketIdentity } from './ticket-identities.mjs';
 import { Engineers, parseCommand as engineerCommand, engineersEnabled } from './engineers.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -434,6 +435,31 @@ async function loadTickets() {
   } catch { /* ещё не было */ }
 }
 
+/** Актуальные номера перенесённых задач; адресаты и отметки комментариев не меняются. */
+async function refreshTicketIdentities() {
+  if (!yt.clinicRouting) return;
+  let updated=0;
+  for (const t of tickets.filter(t => t.ytId)) {
+    try { if (updateTicketIdentity(t, await yt.issueInfo(t.ytId))) updated++; }
+    catch (e) { console.error(`YouTrack: не удалось сверить ${t.ytKey || t.ytId} (${e.status || e.message})`); }
+  }
+  for (const item of queue.filter(q => q.ytIssue?.id)) {
+    try { const info=await yt.issueInfo(item.ytIssue.id);item.ytIssue.key=info.key;item.ticketNo=info.key;item.ticketLink=yt.issueUrl(info.key); }
+    catch (e) { console.error(`YouTrack: задача из очереди недоступна (${e.status || e.message})`); }
+  }
+  for (const mode of replies.values()) {
+    const t=tickets.find(t => t.taskId === mode.taskId);
+    if(t) mode.ticketNo=t.ticketNo;
+  }
+  if(updated) await saveTickets();
+  await saveQueue();
+  await saveReplies();
+  // Забрать ответы, накопившиеся до переключения проектов, без повторной доставки.
+  const since=tickets.filter(t => t.ytId && isLive(t)).map(t => t.ytSince || t.createdAt).filter(Number.isFinite);
+  if(since.length) ytSweepAt=Math.min(ytSweepAt,...since);
+  console.log(`YouTrack: сверка номеров завершена, обновлено ${updated}`);
+}
+
 async function saveTickets() {
   try {
     await mkdir(STATE_DIR, { recursive: true });
@@ -499,7 +525,11 @@ async function relayYouTrackTick() {
   if (changedIds) ytSweepAt = started;
   const batch = changedIds ? live.filter((t) => changedIds.has(t.ytId)) : live.slice(0, RELAY_BATCH);
   let changed = false;
-  for (const t of batch) if (await relayYouTrackTicket(t)) changed = true;
+  for (const t of batch) {
+    const detail=changedIds?.details?.get(t.ytId);
+    if(detail?.idReadable && updateTicketIdentity(t,{key:detail.idReadable,project:detail.project?.shortName})) changed=true;
+    if (await relayYouTrackTicket(t)) changed=true;
+  }
   if (changed) await saveTickets();
 }
 
@@ -1013,7 +1043,7 @@ export async function dispatch(update) {
 
     const isStart =
       ev.kind === 'start' ||
-      !session ||                                   // первое обращение
+      (!session && !replies.has(ev.userId)) ||        // первое обращение вне режима ответа
       payload === 'new:ticket' || manual ||
       (ev.kind === 'text' && START_RE.test(said));
 
@@ -1250,7 +1280,10 @@ await loadQueue();
 await engineers.load();
 if (!engineersEnabled) console.log('BOT_ENGINEER_CODE не задан — подписка инженеров на уведомления выключена.');
 if (planfixConfigured) await loadFields();
-if (yt.youtrackConfigured) await yt.loadProject().catch((e) => console.error('YouTrack недоступен при старте:', e.message));
+if (yt.youtrackConfigured) {
+  try { await yt.loadProject(); await refreshTicketIdentities(); }
+  catch (e) { console.error('YouTrack недоступен при старте:', e.message); }
+}
 await registerCommands();
 
 if (planfixConfigured || yt.youtrackConfigured) {

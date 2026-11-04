@@ -84,6 +84,24 @@ export const CLINIC_GROUP = {
   'Медикус (Медавто)': 'Клиенты Тюмень (Медикус)',
 };
 
+// Отдельный проект YouTrack для каждой клиники. MIC не используется как запасной.
+export const CLINIC_PROJECT = {
+  'МедГород': 'SupportMG',
+  'Юнимед': 'SupportUnimed',
+  'ГП-1': 'SupportGP1',
+  'ГП-17': 'SupportGP17',
+  'ДОКТОР МИРА': 'SupportDocWorld',
+  'Нефтяник Здоровье': 'SupportZdorovie',
+  'Медикус (Медавто)': 'SupportMedikus',
+  'Нефтяник-Мед': 'SupportNeftMed',
+  'Нефтяник Курган': 'SupportNeftKurgan',
+  'Нефтяник Нов.Уренгой': 'SupportNeftUrengoy',
+  'Нефтяник стационар': 'SupportNeftStac',
+  'Нефтяник Шиллера': 'SupportNeftShillera',
+  'Нигинского': 'SupportNiginskogo',
+  'ТГМУ': 'SupportTGMU',
+};
+
 export const MODULES = [
   'ЭМК',
   'Локус (регистратура/расписание)',
