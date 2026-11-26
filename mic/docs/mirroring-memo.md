@@ -15,11 +15,11 @@ MIC не принимает новые заявки. Отдельные прое
 |---|---|---|
 | МедГород | SupportMG | Деравчук |
 | Юнимед | SupportUnimed | Деравчук |
-| ГП-1 | SupportGP1 | Щербаков |
-| ГП-17 | SupportGP17 | Щербаков |
-| Доктор Мира | SupportDocWorld | Щербаков |
+| ГП-1 | SupportGP1 | Касимов |
+| ГП-17 | SupportGP17 | Касимов |
+| Доктор Мира | SupportDocWorld | Перевертов |
 | Нефтяник Здоровье | SupportZdorovie | Перевертов |
-| Медикус | SupportMedikus | Перевертов |
+| Медикус | SupportMedikus | Деравчук |
 | Нефтяник-Мед | SupportNeftMed | Деравчук |
 | Нефтяник Курган | SupportNeftKurgan | Перевертов |
 | Нефтяник Новый Уренгой | SupportNeftUrengoy | Перевертов |

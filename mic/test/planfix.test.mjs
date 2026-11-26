@@ -189,8 +189,8 @@ try {
   console.log('\n7. Исполнитель по клинике');
   await createTask({ name: 'п', description: 'x', contactId: 971, clinic: 'ГП-1' });
   const gp1 = created[created.length - 1];
-  check('ГП-1 уходит Щербакову',
-    JSON.stringify(gp1.assignees.users) === JSON.stringify([{ id: 'user:63' }]),
+  check('ГП-1 уходит Касимову',
+    JSON.stringify(gp1.assignees.users) === JSON.stringify([{ id: 'user:7' }]),
     JSON.stringify(gp1.assignees.users));
 
   await createTask({ name: 'п', description: 'x', contactId: 971, clinic: 'МедГород' });

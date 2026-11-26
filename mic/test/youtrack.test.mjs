@@ -90,7 +90,7 @@ try {
   check('Объект — списком (MultiEnum)', created[0].customFields.find((f) => f.name === 'Объект')?.$type === 'MultiEnumIssueCustomField');
   check('Месяц создания = месяц оформления', cf['Месяц создания'] === '2026.10', cf['Месяц создания']);
   check('видимость: группа клиники + команда', created[0].visibility?.$type === 'LimitedVisibility' && JSON.stringify(created[0].visibility.permittedGroups) === '[{"id":"20-1"},{"id":"581-1"}]', JSON.stringify(created[0].visibility));
-  check('исполнитель по клинике — Щербаков', cf['Разработчик'] === 'shcherbakov_eg', cf['Разработчик']);
+  check('исполнитель по клинике — Касимов', cf['Разработчик'] === 'kasimov_dv', cf['Разработчик']);
   check('проект подставлен', created[0].project.id === '59-247');
 
   await yt.createIssue({ summary: 'д', description: 'x', fields: { kind: 'Доработка', clinic: 'МедГород', urgency: 'Незначительно / пожелание' }, createdAt: Date.UTC(2027, 0, 5, 12) });
@@ -119,7 +119,7 @@ try {
   rejectAssignee = false;
   await yt.createIssue({ summary: 'x', description: 'x', fields: { ...fields, urgency: 'Срочно-срочно' } });
   const cf5 = Object.fromEntries(created.at(-1).customFields.map((f) => [f.name, val(f)]));
-  check('значения нет в списке — поле выброшено, остальные целы', !('Срочность' in cf5) && cf5['Клиника'] === 'ГП-1' && cf5['Разработчик'] === 'shcherbakov_eg', JSON.stringify(cf5));
+  check('значения нет в списке — поле выброшено, остальные целы', !('Срочность' in cf5) && cf5['Клиника'] === 'ГП-1' && cf5['Разработчик'] === 'kasimov_dv', JSON.stringify(cf5));
 
   rejectVisibility = true;
   await yt.createIssue({ summary: 'x', description: 'x', fields, createdAt: Date.UTC(2026, 9, 1) });
