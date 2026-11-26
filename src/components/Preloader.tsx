@@ -1,10 +1,12 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { gsap, useGSAP, prefersReducedMotion } from "@/lib/gsap";
 import Logo from "./Logo";
 
 export default function Preloader() {
+  const isPresentation = usePathname() === "/services/ai-processes";
   const root = useRef<HTMLDivElement>(null);
   const stack = useRef<HTMLDivElement>(null);
   const rRef = useRef<HTMLSpanElement>(null);
@@ -15,15 +17,19 @@ export default function Preloader() {
 
   useGSAP(
     () => {
+      if (isPresentation || hidden || !root.current) return;
       const lenis = (window as unknown as {
         lenis?: { stop: () => void; start: () => void };
       }).lenis;
       lenis?.stop();
       document.body.style.overflow = "hidden";
 
-      const finish = () => {
+      const unlock = () => {
         lenis?.start();
         document.body.style.overflow = "";
+      };
+      const finish = () => {
+        unlock();
         setHidden(true);
       };
       const setCount = (v: number) => {
@@ -39,7 +45,7 @@ export default function Preloader() {
           .to(c, { v: 100, duration: 1, onUpdate: () => setCount(c.v) })
           .to(".pl-bar", { scaleX: 1, duration: 1 }, 0)
           .to(root.current, { opacity: 0, duration: 0.4 });
-        return;
+        return unlock;
       }
 
       const rnd = gsap.utils.random;
@@ -117,11 +123,16 @@ export default function Preloader() {
       gsap.to(".pl-bar", { scaleX: 1, duration: 2.6, ease: "power1.inOut" });
       // count "stutter" flickers
       gsap.to(".pl-count", { skewX: 16, duration: 0.05, repeat: 5, yoyo: true, delay: 0.8 });
+
+      return () => {
+        alive = false;
+        unlock();
+      };
     },
-    { scope: root }
+    { scope: root, dependencies: [isPresentation, hidden], revertOnUpdate: true }
   );
 
-  if (hidden) return null;
+  if (hidden || isPresentation) return null;
 
   return (
     <div

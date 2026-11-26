@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef } from "react";
+import Link from "next/link";
 import { gsap, useGSAP } from "@/lib/gsap";
 import GlitchText from "./GlitchText";
 
@@ -12,7 +13,7 @@ const services = [
   { n: "05", title: "Разработка", desc: "Next.js, анимации на GSAP, интеграции, поддержка." },
   { n: "06", title: "Полиграфия", desc: "Упаковка, этикетки, печатные материалы премиум-уровня." },
   { n: "07", title: "Моушн", desc: "Анимация, видео, motion-айдентика для соцсетей и сайта." },
-  { n: "08", title: "AI-агенты", desc: "Чат-боты, ассистенты и автоматизации на базе ИИ — интегрируем в сайт и процессы бизнеса." },
+  { n: "08", title: "AI-агенты", href: "/services/ai-processes", desc: "Чат-боты, ассистенты и автоматизации на базе ИИ — интегрируем в сайт и процессы бизнеса." },
 ];
 
 export default function Services() {
@@ -41,7 +42,19 @@ export default function Services() {
       </GlitchText>
 
       <div className="srv-list border-t border-bone/10">
-        {services.map((s) => (
+        {services.map((s) => s.href ? (
+          <Link
+            key={s.n}
+            href={s.href}
+            data-cursor
+            className="srv-row group relative grid grid-cols-[2.5rem_minmax(0,1fr)_auto] items-baseline gap-x-4 gap-y-3 border-b border-bone/10 py-7 md:gap-x-12 md:py-9 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-signal"
+          >
+            <span className="label text-steel">{s.n}</span>
+            <h3 className="text-4xl font-normal tracking-[-0.03em] group-hover:text-signal group-focus-visible:text-signal md:text-6xl">{s.title}</h3>
+            <span className="col-start-3 row-span-2 row-start-1 self-center text-xl text-bone group-hover:text-signal" aria-hidden="true">↗</span>
+            <p className="col-start-2 text-sm text-bone/70 md:text-base">Анализ и оптимизация процессов. Демонстрация помощника и калькулятор экономии времени.</p>
+          </Link>
+        ) : (
           <div
             key={s.n}
             data-cursor

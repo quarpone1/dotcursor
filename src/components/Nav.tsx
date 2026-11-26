@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { gsap, ScrollTrigger, useGSAP } from "@/lib/gsap";
 import Logo from "./Logo";
 import MagneticButton from "./MagneticButton";
@@ -17,12 +18,14 @@ const links = [
 type Lenis = { stop: () => void; start: () => void };
 
 export default function Nav() {
+  const isPresentation = usePathname() === "/services/ai-processes";
   const ref = useRef<HTMLElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
 
   useGSAP(
     () => {
+      if (isPresentation) return;
       let ready = false;
       gsap.from(ref.current, {
         yPercent: -120,
@@ -53,23 +56,26 @@ export default function Nav() {
       });
 
       // animated underline on hover (desktop)
-      ref.current!.querySelectorAll<HTMLElement>(".nav-link").forEach((link) => {
+      const listeners = Array.from(ref.current!.querySelectorAll<HTMLElement>(".nav-link"), (link) => {
         const line = link.querySelector(".nav-underline") as HTMLElement;
         gsap.set(line, { scaleX: 0, transformOrigin: "left center" });
-        link.addEventListener("mouseenter", () =>
-          gsap.to(line, { scaleX: 1, duration: 0.4, ease: "power3.out" })
-        );
-        link.addEventListener("mouseleave", () =>
-          gsap.to(line, {
-            scaleX: 0,
-            duration: 0.4,
-            ease: "power3.in",
-            transformOrigin: "right center",
-          })
-        );
+        const enter = () => gsap.to(line, { scaleX: 1, duration: 0.4, ease: "power3.out" });
+        const leave = () => gsap.to(line, {
+          scaleX: 0,
+          duration: 0.4,
+          ease: "power3.in",
+          transformOrigin: "right center",
+        });
+        link.addEventListener("mouseenter", enter);
+        link.addEventListener("mouseleave", leave);
+        return () => {
+          link.removeEventListener("mouseenter", enter);
+          link.removeEventListener("mouseleave", leave);
+        };
       });
+      return () => listeners.forEach((remove) => remove());
     },
-    { scope: ref }
+    { scope: ref, dependencies: [isPresentation], revertOnUpdate: true }
   );
 
   // open/close the fullscreen mobile menu
@@ -104,14 +110,14 @@ export default function Nav() {
     <>
       <nav
         ref={ref}
-        className="fixed top-0 inset-x-0 z-[900] flex items-center justify-between px-shell py-6 mix-blend-difference text-bone"
+        className={`${isPresentation ? "absolute" : "fixed mix-blend-difference"} top-0 inset-x-0 z-[900] flex items-center justify-between px-shell py-6 text-bone`}
       >
-        <a href="#top" aria-label=".КУРСОР — на главную" onClick={() => open && toggle(false)}>
+        <a href={isPresentation ? "/" : "#top"} aria-label=".КУРСОР — на главную" onClick={() => open && toggle(false)}>
           <Logo className="h-5 md:h-6 w-auto" />
         </a>
 
         {/* desktop links */}
-        <ul className="hidden md:flex items-center gap-10 label">
+        <ul className="hidden lg:flex items-center gap-8 xl:gap-10 label">
           {links.map((l) => (
             <li key={l.href}>
               <a href={l.href} className="nav-link relative inline-block py-1">
@@ -121,24 +127,26 @@ export default function Nav() {
                     <span aria-hidden="true" className="text-signal">{l.label}</span>
                   </span>
                 </span>
-                <span className="nav-underline absolute left-0 -bottom-0.5 h-px w-full bg-bone" />
+                <span className={`nav-underline absolute left-0 -bottom-0.5 h-px w-full bg-bone ${isPresentation ? "hidden" : ""}`} />
               </a>
             </li>
           ))}
         </ul>
 
         {/* desktop CTA */}
-        <MagneticButton
-          href="#contact"
-          className="sheen hidden md:inline-block label border border-bone/40 rounded-full px-5 py-2.5 hover:bg-bone hover:text-ink transition-colors"
-        >
-          Связаться
-        </MagneticButton>
+        <div className="hidden lg:block">
+          <MagneticButton
+            href="#contact"
+            className="sheen label border border-bone/40 rounded-full px-5 py-2.5 hover:bg-bone hover:text-ink transition-colors"
+          >
+            Связаться
+          </MagneticButton>
+        </div>
 
         {/* mobile hamburger */}
         <button
           onClick={() => toggle(!open)}
-          className="md:hidden flex flex-col gap-[5px] p-2 -mr-2"
+          className="lg:hidden flex min-h-11 min-w-11 flex-col items-center justify-center gap-[5px] -mr-2"
           aria-label={open ? "Закрыть меню" : "Открыть меню"}
           aria-expanded={open}
         >
@@ -158,7 +166,7 @@ export default function Nav() {
       {/* fullscreen mobile menu */}
       <div
         ref={menuRef}
-        className="fixed inset-0 z-[800] hidden md:!hidden flex-col justify-between bg-ink text-bone px-shell pt-28 pb-10"
+        className="fixed inset-0 z-[800] hidden lg:!hidden flex-col justify-between bg-ink text-bone px-shell pt-28 pb-10"
         style={{ clipPath: "inset(0 0 100% 0)" }}
       >
         <ul className="flex flex-col gap-2">

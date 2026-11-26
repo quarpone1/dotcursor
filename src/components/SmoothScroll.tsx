@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import Lenis from "lenis";
-import { gsap, ScrollTrigger } from "@/lib/gsap";
+import { gsap, prefersReducedMotion, ScrollTrigger } from "@/lib/gsap";
 
 export default function SmoothScroll({
   children,
@@ -11,7 +11,7 @@ export default function SmoothScroll({
 }) {
   useEffect(() => {
     // На тач-устройствах оставляем нативный скролл — Lenis не инициализируем.
-    if (window.matchMedia("(pointer: coarse)").matches) return;
+    if (window.matchMedia("(pointer: coarse)").matches || prefersReducedMotion()) return;
 
     const lenis = new Lenis({
       lerp: 0.1,
