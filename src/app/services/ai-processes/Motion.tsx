@@ -61,6 +61,14 @@ export function HeroVisual() {
     gsap.fromTo("[data-hero-figure]", { y: 12, opacity: 0.5 }, {
       y: 0, opacity: 1, duration: 0.85, ease: "power3.out",
     });
+    gsap.to("[data-hero-wash]", {
+      opacity: 0.86,
+      duration: 5.5,
+      repeat: -1,
+      yoyo: true,
+      ease: "sine.inOut",
+      scrollTrigger: { trigger: root.current, start: "top bottom", end: "bottom top", toggleActions: "play pause resume pause" },
+    });
   }, { scope: root, dependencies: [reduced], revertOnUpdate: true });
 
   return (
@@ -70,7 +78,7 @@ export function HeroVisual() {
           <source src="/video/showreel.mp4" type="video/mp4" />
         </video>
       )}
-      <div className={styles.heroWash} />
+      <div className={styles.heroWash} data-hero-wash />
       <div className={styles.heroFigure} data-hero-figure>
         <div ref={stage} className={styles.hairlineStage} data-hairline="document-scanner" data-hairline-theme="dark">
           <svg ref={svg} viewBox="0 0 400 320" />

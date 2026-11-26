@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Work_Sans } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import SmoothScroll from "@/components/SmoothScroll";
 import Preloader from "@/components/Preloader";
@@ -12,9 +12,10 @@ import YandexMetrika from "@/components/YandexMetrika";
 
 // Work Sans for Latin/body. Headings & Cyrillic resolve to SF Pro Display
 // via the system font stack defined in globals.css.
-const workSans = Work_Sans({
+const workSans = localFont({
+  src: "./fonts/WorkSans.woff2",
+  weight: "100 900",
   variable: "--font-work",
-  subsets: ["latin"],
   display: "swap",
 });
 

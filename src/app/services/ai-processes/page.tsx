@@ -74,7 +74,7 @@ export default function AIProcessesPage() {
             <a className={styles.logoLink} href="https://dotcursor.ru/" target="_blank" rel="noopener noreferrer"
               aria-label=".КУРСОР — больше о студии и наших работах, в новой вкладке">
               <span className={styles.logoArrow} aria-hidden="true">↗</span>
-              <Logo className={styles.wordmark} />
+              <span className={styles.wordmark} data-ai-reveal><Logo /></span>
               <span>Больше о студии и наших работах</span>
             </a>
           </div>
