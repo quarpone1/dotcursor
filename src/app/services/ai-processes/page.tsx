@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
+import Footer from "@/components/Footer";
+import IntegrationDiagram from "./IntegrationDiagram";
 import Logo from "@/components/Logo";
 import DocumentDemo from "./DocumentDemo";
 import EffectCalculator from "./EffectCalculator";
@@ -42,108 +44,88 @@ const presentationLinks = [
 
 export default function AIProcessesPage() {
   return (
-    <main className={styles.page} id="top">
-      <PresentationMotion />
-      <section className={styles.hero} aria-labelledby="ai-heading">
-        <HeroVisual />
-        <div className={`${styles.wrap} ${styles.heroWrap}`}>
-          <div className={styles.heroCopy}>
-            <Link className={styles.breadcrumb} href="/#services">← Услуги студии</Link>
-            <p className={styles.kicker}>AI для операционных процессов</p>
-            <h1 id="ai-heading">Процессы.<br /><em>Умнее.</em></h1>
-            <p className={styles.heroLead}>Помощники берут рутину на себя. Ваша команда проверяет данные и принимает решения.</p>
-            <div className={styles.heroActions}>
-              <a className={styles.primary} href="#demo">Смотреть в действии<span aria-hidden="true">↘</span></a>
-              <a className={styles.secondary} href="#contact">Обсудить процесс<span aria-hidden="true">↗</span></a>
+    <>
+      <main className={styles.page} id="top">
+        <PresentationMotion />
+        <section className={styles.hero} aria-labelledby="ai-heading">
+          <HeroVisual />
+          <div className={`${styles.wrap} ${styles.heroWrap}`}>
+            <div className={styles.heroCopy}>
+              <Link className={styles.breadcrumb} href="/#services">← Услуги студии</Link>
+              <p className={styles.kicker}>AI для операционных процессов</p>
+              <h1 id="ai-heading">Процессы.<br /><em>Умнее.</em></h1>
+              <p className={styles.heroLead}>Помощники берут рутину на себя. Ваша команда проверяет данные и принимает решения.</p>
+              <div className={styles.heroActions}>
+                <a className={styles.primary} href="#demo">Смотреть в действии<span aria-hidden="true">↘</span></a>
+                <a className={styles.secondary} href="#contact">Обсудить процесс<span aria-hidden="true">↗</span></a>
+              </div>
+            </div>
+            <nav className={styles.presentationNav} aria-label="Разделы презентации">
+              {presentationLinks.map(([href, label]) => <a key={href} href={href}>{label}</a>)}
+            </nav>
+          </div>
+        </section>
+
+        <section className={styles.section} id="approach" aria-labelledby="approach-heading">
+          <div className={styles.wrap}>
+            <div className={styles.aboutTop}>
+              <header className={styles.heading} data-ai-reveal>
+                <p className={styles.kicker}>О команде</p>
+                <h2 id="approach-heading">Сначала бизнес.<br />Потом решение.</h2>
+                <p>.КУРСОР — команда дизайна и ИТ-разработки. Разбираемся, как устроены процессы, проектируем интерфейсы и доводим сервисы до запуска.</p>
+              </header>
+              <a className={styles.logoLink} href="https://dotcursor.ru/" target="_blank" rel="noopener noreferrer"
+                aria-label=".КУРСОР — больше о студии и наших работах, в новой вкладке">
+                <span className={styles.logoArrow} aria-hidden="true">↗</span>
+                <span className={styles.wordmark} data-ai-reveal><Logo /></span>
+                <span>Больше о студии и наших работах</span>
+              </a>
+            </div>
+            <div className={styles.approach}>
+              {approach.map(([step, name, details]) => (
+                <article key={step}>
+                  <p className={styles.kicker}>{step}</p>
+                  <h3>{name}</h3>
+                  <p>{details}</p>
+                </article>
+              ))}
             </div>
           </div>
-          <nav className={styles.presentationNav} aria-label="Разделы презентации">
-            {presentationLinks.map(([href, label]) => <a key={href} href={href}>{label}</a>)}
-          </nav>
-        </div>
-      </section>
+        </section>
 
-      <section className={styles.section} id="approach" aria-labelledby="approach-heading">
-        <div className={styles.wrap}>
-          <div className={styles.aboutTop}>
-            <header className={styles.heading} data-ai-reveal>
-              <p className={styles.kicker}>О команде</p>
-              <h2 id="approach-heading">Сначала бизнес.<br />Потом решение.</h2>
-              <p>.КУРСОР — команда дизайна и ИТ-разработки. Разбираемся, как устроены процессы, проектируем интерфейсы и доводим сервисы до запуска.</p>
-            </header>
-            <a className={styles.logoLink} href="https://dotcursor.ru/" target="_blank" rel="noopener noreferrer"
-              aria-label=".КУРСОР — больше о студии и наших работах, в новой вкладке">
-              <span className={styles.logoArrow} aria-hidden="true">↗</span>
-              <span className={styles.wordmark} data-ai-reveal><Logo /></span>
-              <span>Больше о студии и наших работах</span>
-            </a>
+        <ProcessComparison />
+        <DocumentDemo />
+        <IndustryScenarios />
+
+        <section className={styles.industry} aria-labelledby="industry-heading">
+          <Image src="/ai-processes/weighbridge.webp" alt="Мусоровоз на автомобильных весах у сортировочного комплекса"
+            fill sizes="100vw" />
+          <div className={styles.wrap}>
+            <h2 id="industry-heading">За каждым рейсом<br />стоят данные</h2>
           </div>
-          <div className={styles.approach}>
-            {approach.map(([step, name, details]) => (
-              <article key={step}>
-                <p className={styles.kicker}>{step}</p>
-                <h3>{name}</h3>
-                <p>{details}</p>
-              </article>
-            ))}
+        </section>
+
+        <section className={styles.section} id="integration" aria-labelledby="integration-heading">
+          <div className={`${styles.wrap} ${styles.integration}`}>
+            <div>
+              <header className={styles.heading} data-ai-reveal>
+                <p className={styles.kicker}>Варианты внедрения</p>
+                <h2 id="integration-heading">Отдельный сервис или часть вашей системы</h2>
+              </header>
+              <dl className={styles.integrationOptions}>
+                <div><dt>Отдельный сервис</dt><dd>Бот или веб-интерфейс принимает файлы и готовит реестр для проверки.</dd></div>
+                <div><dt>Интеграция в действующий процесс</dt><dd>Сотрудники работают в привычной системе. Обмен данными идёт через API или согласованные форматы.</dd></div>
+              </dl>
+              <p className={styles.note}>Подключение зависит от доступных интерфейсов, качества данных и прав доступа.</p>
+            </div>
+            <IntegrationDiagram />
           </div>
-        </div>
-      </section>
+        </section>
 
-      <ProcessComparison />
-      <DocumentDemo />
-      <IndustryScenarios />
-
-      <section className={styles.industry} aria-labelledby="industry-heading">
-        <Image src="/ai-processes/industry.jpg" alt="Транспорт на площадке обращения с отходами, вид сверху"
-          fill sizes="100vw" />
-        <div className={styles.wrap}>
-          <p className={styles.kicker}>Отраслевая иллюстрация</p>
-          <h2 id="industry-heading">За каждым рейсом<br />стоят данные</h2>
-          <a href="https://unsplash.com/photographs/iStOOuKixk0" target="_blank" rel="noopener noreferrer">Фото Daniel Miksha / Unsplash ↗</a>
-        </div>
-      </section>
-
-      <section className={styles.section} id="integration" aria-labelledby="integration-heading">
-        <div className={`${styles.wrap} ${styles.integration}`}>
-          <div>
-            <header className={styles.heading} data-ai-reveal>
-              <p className={styles.kicker}>Варианты внедрения</p>
-              <h2 id="integration-heading">Отдельный сервис или часть вашей системы</h2>
-            </header>
-            <dl className={styles.integrationOptions}>
-              <div><dt>Отдельный сервис</dt><dd>Бот или веб-интерфейс принимает файлы и готовит реестр для проверки.</dd></div>
-              <div><dt>Интеграция в действующий процесс</dt><dd>Сотрудники работают в привычной системе. Обмен данными идёт через API или согласованные форматы.</dd></div>
-            </dl>
-            <p className={styles.note}>Подключение зависит от доступных интерфейсов, качества данных и прав доступа.</p>
-          </div>
-          <div className={styles.integrationMap} aria-label="Системы, с которыми может обмениваться данными AI-помощник" role="group">
-            <svg viewBox="0 0 440 360" preserveAspectRatio="none" aria-hidden="true">
-              <path d="M220 180H135Q110 180 110 155V88M220 180H305Q330 180 330 155V88M220 180H135Q110 180 110 205V272M220 180H305Q330 180 330 205V272" />
-              <rect x="75" y="54" width="290" height="252" rx="26" />
-            </svg>
-            <span>1С / учёт</span><span>CRM</span><strong>AI</strong><span>Диспетчерская</span><span>Файлы и почта</span>
-          </div>
-        </div>
-      </section>
-
-      <EffectCalculator />
-      <Roadmap />
-
-      <footer className={styles.contact} id="contact">
-        <div className={styles.wrap}>
-          <header className={styles.heading} data-ai-reveal>
-            <p className={styles.kicker}>Следующий шаг</p>
-            <h2>Обсудим ваш процесс</h2>
-            <p>На встрече выберем один поток документов или обращений и обсудим, что можно проверить на пилоте.</p>
-          </header>
-          <div className={styles.heroActions}>
-            <a className={styles.primary} href="mailto:cursordot@yandex.ru?subject=AI%20для%20операционных%20процессов">cursordot@yandex.ru<span aria-hidden="true">↗</span></a>
-            <a className={styles.secondary} href="https://t.me/CURSOR_ARTandMIND" target="_blank" rel="noopener noreferrer">Telegram<span aria-hidden="true">↗</span></a>
-          </div>
-          <div className={styles.footerBar}><Link href="/"><Logo className={styles.footerLogo} /></Link><span>Студия .КУРСОР · Тюмень</span></div>
-        </div>
-      </footer>
-    </main>
+        <EffectCalculator />
+        <Roadmap />
+      </main>
+      <Footer />
+    </>
   );
 }

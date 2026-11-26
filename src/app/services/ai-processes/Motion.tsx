@@ -25,18 +25,32 @@ export function useReducedMotion() {
   return reduced;
 }
 
-export function HeroVisual() {
-  const root = useRef<HTMLDivElement>(null);
-  const video = useRef<HTMLVideoElement>(null);
+export function HairlineScanner() {
   const stage = useRef<HTMLDivElement>(null);
   const svg = useRef<SVGSVGElement>(null);
-  const reduced = useReducedMotion();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     if (!ready || !stage.current || !svg.current) return;
     return window.mountDotcursorHairline?.(stage.current, svg.current);
   }, [ready]);
+
+  const markReady = () => setReady(true);
+
+  return (
+    <>
+      <div ref={stage} className={styles.hairlineStage} data-hairline="document-scanner" data-hairline-theme="dark">
+        <svg ref={svg} viewBox="0 0 400 320" />
+      </div>
+      <Script src="/ai-processes/hairline.js" onLoad={markReady} onReady={markReady} />
+    </>
+  );
+}
+
+export function HeroVisual() {
+  const root = useRef<HTMLDivElement>(null);
+  const video = useRef<HTMLVideoElement>(null);
+  const reduced = useReducedMotion();
 
   useEffect(() => {
     const player = video.current;
@@ -80,11 +94,8 @@ export function HeroVisual() {
       )}
       <div className={styles.heroWash} data-hero-wash />
       <div className={styles.heroFigure} data-hero-figure>
-        <div ref={stage} className={styles.hairlineStage} data-hairline="document-scanner" data-hairline-theme="dark">
-          <svg ref={svg} viewBox="0 0 400 320" />
-        </div>
+        <HairlineScanner />
       </div>
-      <Script src="/ai-processes/hairline.js" onReady={() => setReady(true)} />
     </div>
   );
 }

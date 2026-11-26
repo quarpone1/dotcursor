@@ -1,8 +1,9 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
+import { useId, useRef, useState, type CSSProperties } from "react";
 import { gsap, useGSAP } from "@/lib/gsap";
 import { useReducedMotion } from "./Motion";
+import { assistedMinutes, manualMinutes } from "./timeExample";
 import styles from "./presentation.module.css";
 
 const workdays = 22;
@@ -10,17 +11,16 @@ const format = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 });
 const parameters = [
   { key: "volume", label: "Документов в день", min: 1, max: 500, unit: "" },
   { key: "manual", label: "Обработка вручную", min: 1, max: 60, unit: "мин" },
-  { key: "assisted", label: "С помощником, включая проверку", min: 1, max: 60, unit: "мин" },
 ] as const;
 
 export default function EffectCalculator() {
   const id = useId();
-  const [{ volume, manual, assisted }, setValues] = useState({ volume: 100, manual: 8, assisted: 3 });
+  const [{ volume, manual }, setValues] = useState({ volume: 100, manual: manualMinutes });
   const arc = useRef<SVGCircleElement>(null);
   const reduced = useReducedMotion();
-  const saving = Math.max(0, manual - assisted);
+  const saving = Math.max(0, manual - assistedMinutes);
   const hours = format.format(volume * saving * workdays / 60);
-  const values = { volume, manual, assisted };
+  const values = { volume, manual };
 
   useGSAP(() => {
     const element = arc.current;
@@ -52,6 +52,7 @@ export default function EffectCalculator() {
                 </div>
                 <input
                   id={`${id}-${key}`}
+                  style={{ "--fill": `${100 * (values[key] - min) / (max - min)}%` } as CSSProperties}
                   type="range" min={min} max={max} value={values[key]}
                   aria-valuetext={unit ? `${values[key]} минут на документ` : String(values[key])}
                   onChange={(event) => {
@@ -69,14 +70,14 @@ export default function EffectCalculator() {
                 <circle cx="120" cy="120" r="112" className={styles.chartGuide} />
                 <circle cx="120" cy="120" r="98" className={styles.chartBase} />
                 <circle cx="120" cy="120" r="98" className={styles.chartSaving} ref={arc}
-                  pathLength="100" strokeDasharray="100" strokeDashoffset="37.5" transform="rotate(-90 120 120)" />
+                  pathLength="100" strokeDasharray="100" strokeDashoffset={100 * assistedMinutes / manualMinutes} transform="rotate(-90 120 120)" />
                 <circle cx="120" cy="120" r="84" className={styles.chartGuide} />
               </svg>
-              <div><strong>{saving} <small>мин</small></strong><span>экономии на документе</span></div>
+              <div><strong>{assistedMinutes} <small>мин</small></strong><span>с помощником на документ</span></div>
             </div>
             <div className={styles.chartDetail}>
-              <p>Исходное время <strong>{manual} мин</strong></p>
-              <p><i className={styles.remainingKey} /> С помощником <strong>{assisted} мин</strong></p>
+              <p>Вручную <strong>{manual} мин</strong></p>
+              <p><i className={styles.remainingKey} /> С помощником <strong>{assistedMinutes} мин</strong></p>
               <p><i className={styles.savingKey} /> Экономия <strong>{saving} мин</strong></p>
               <div className={styles.monthly}>
                 <strong>{hours} <small>ч в месяц</small></strong>
@@ -84,11 +85,8 @@ export default function EffectCalculator() {
               </div>
             </div>
           </div>
-          <p className={styles.formula}>
-            {format.format(volume)} док. × {saving} мин экономии × {workdays} рабочих дня / 60
-          </p>
         </div>
-        <p className={styles.note}>Иллюстративный расчёт. Фактическое время измеряем на пилоте. Денежный эффект оцениваем с учётом стоимости разработки, эксплуатации и контроля.</p>
+        <p className={styles.note}>Для примера берём {workdays} рабочих дня в месяце и {assistedMinutes} минуту на документ с помощником, включая проверку сотрудником. Фактическое время измеряем на пилоте.</p>
       </div>
     </section>
   );
